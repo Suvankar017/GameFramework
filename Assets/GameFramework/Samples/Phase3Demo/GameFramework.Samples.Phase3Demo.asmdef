@@ -1,0 +1,24 @@
+{
+    "name": "GameFramework.Samples.Phase3Demo",
+    "rootNamespace": "GameFramework.Samples.Phase3Demo",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Input",
+        "GameFramework.Localization",
+        "GameFramework.Audio",
+        "GameFramework.Feedback",
+        "GameFramework.UI",
+        "GameFramework.PlayerSystems",
+        "Unity.TextMeshPro"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

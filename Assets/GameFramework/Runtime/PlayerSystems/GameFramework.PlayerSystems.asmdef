@@ -1,0 +1,22 @@
+{
+    "name": "GameFramework.PlayerSystems",
+    "rootNamespace": "GameFramework.PlayerSystems",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Input",
+        "GameFramework.Localization",
+        "GameFramework.Audio",
+        "GameFramework.Feedback",
+        "GameFramework.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -1,0 +1,21 @@
+{
+    "name": "GameFramework.UI",
+    "rootNamespace": "GameFramework.UI",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Localization",
+        "GameFramework.Audio",
+        "GameFramework.Feedback",
+        "Unity.TextMeshPro"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
