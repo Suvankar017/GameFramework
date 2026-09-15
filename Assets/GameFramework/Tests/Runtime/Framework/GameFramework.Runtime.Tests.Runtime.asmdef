@@ -1,0 +1,23 @@
+{
+    "name": "GameFramework.Runtime.Tests.Runtime",
+    "rootNamespace": "GameFramework.Runtime.Tests",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

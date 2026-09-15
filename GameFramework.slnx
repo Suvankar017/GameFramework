@@ -1,0 +1,8 @@
+﻿<Solution>
+  <Project Path="GameFramework.Runtime.csproj" />
+  <Project Path="GameFramework.Runtime.Tests.csproj" />
+  <Project Path="GameFramework.Core.csproj" />
+  <Project Path="GameFramework.Core.Tests.csproj" />
+  <Project Path="GameFramework.Core.Tests.Runtime.csproj" />
+  <Project Path="GameFramework.Runtime.Tests.Runtime.csproj" />
+</Solution>
