@@ -15,7 +15,10 @@ namespace GameFramework.UI
     /// <c>DontDestroyOnLoad</c> root at <see cref="Initialize"/> — the same self-contained pattern
     /// <c>AudioService</c> uses — so a game gets working UI infrastructure with no scene setup.
     /// Ensures an <see cref="EventSystem"/> exists (creating one if the scene has none), since
-    /// without it no UGUI element receives input at all.
+    /// without it no UGUI element receives input at all. Every layer's canvas render mode is
+    /// controlled by the <see cref="UICanvasConfig"/> passed to the constructor — Screen Space -
+    /// Overlay by default (true zero-setup), or Screen Space - Camera when a game needs UI to share
+    /// a camera stack with the world; see <see cref="UICanvasConfig"/>.
     /// </summary>
     public sealed class UIService : IUIService
     {
@@ -27,10 +30,23 @@ namespace GameFramework.UI
         private readonly List<UIScreen> _screenStack = new List<UIScreen>();
         private readonly List<UIPopup> _popups = new List<UIPopup>();
 
+        private readonly UICanvasConfig _config;
+
         private ILoggingService _log;
         private GameObject _root;
         private GameObject _createdEventSystem;
         private GameObject _modalBlocker;
+
+        /// <summary>Builds every layer as Screen Space - Overlay — the framework's original
+        /// zero-setup default. Use <see cref="UIService(UICanvasConfig)"/> for Screen Space - Camera.</summary>
+        public UIService() : this(new UICanvasConfig())
+        {
+        }
+
+        public UIService(UICanvasConfig config)
+        {
+            _config = config ?? new UICanvasConfig();
+        }
 
         public void Initialize(IServiceRegistry registry)
         {
@@ -215,14 +231,33 @@ namespace GameFramework.UI
 
         private void BuildLayers()
         {
+            bool useCameraMode = _config.RenderMode == UIRenderMode.ScreenSpaceCamera;
+            if (useCameraMode && _config.WorldCamera == null)
+            {
+                _log?.Log(LogLevel.Warning, LogCategory,
+                    "UICanvasConfig.RenderMode is ScreenSpaceCamera but WorldCamera is null; " +
+                    "falling back to Screen Space - Overlay for every layer.");
+                useCameraMode = false;
+            }
+
             foreach (UILayer layer in Enum.GetValues(typeof(UILayer)))
             {
                 var layerGo = new GameObject(layer.ToString());
                 layerGo.transform.SetParent(_root.transform, worldPositionStays: false);
 
                 var canvas = layerGo.AddComponent<Canvas>();
-                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
                 canvas.sortingOrder = (int)layer;
+
+                if (useCameraMode)
+                {
+                    canvas.renderMode = RenderMode.ScreenSpaceCamera;
+                    canvas.worldCamera = _config.WorldCamera;
+                    canvas.planeDistance = _config.PlaneDistance;
+                }
+                else
+                {
+                    canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                }
 
                 var scaler = layerGo.AddComponent<CanvasScaler>();
                 scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;

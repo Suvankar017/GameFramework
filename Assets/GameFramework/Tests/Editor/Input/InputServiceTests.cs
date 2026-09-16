@@ -3,6 +3,8 @@ using GameFramework.Input;
 using GameFramework.Runtime.Services;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 
 namespace GameFramework.Input.Tests
 {
@@ -107,6 +109,107 @@ namespace GameFramework.Input.Tests
         }
 
         [Test]
+        public void Button_NewInputKeyBinding_IsRecognized()
+        {
+            var map = BuildMap(new InputActionBindingDefinition
+            {
+                ActionName = "Jump",
+                Type = InputActionType.Button,
+                NewInputKeyboardKeys = new[] { Key.Space }
+            });
+            _input.RegisterActionMap(map);
+
+            _sampler.SetKeyDown(Key.Space, true);
+            _input.Tick();
+
+            Assert.IsTrue(_input.GetButtonDown("Jump"));
+        }
+
+        [Test]
+        public void Button_GamepadButtonBinding_IsRecognized()
+        {
+            var map = BuildMap(new InputActionBindingDefinition
+            {
+                ActionName = "Jump",
+                Type = InputActionType.Button,
+                GamepadButtons = new[] { GamepadButton.South }
+            });
+            _input.RegisterActionMap(map);
+
+            _sampler.SetGamepadButtonDown(GamepadButton.South, true);
+            _input.Tick();
+
+            Assert.IsTrue(_input.GetButtonDown("Jump"));
+        }
+
+        [Test]
+        public void Button_LegacyAndNewInputSources_AreBothHonored()
+        {
+            var map = BuildMap(new InputActionBindingDefinition
+            {
+                ActionName = "Jump",
+                Type = InputActionType.Button,
+                KeyboardKeys = new[] { KeyCode.Space },
+                GamepadButtons = new[] { GamepadButton.South }
+            });
+            _input.RegisterActionMap(map);
+
+            // Legacy source alone satisfies the action.
+            _sampler.SetKeyDown(KeyCode.Space, true);
+            _input.Tick();
+            Assert.IsTrue(_input.GetButtonHeld("Jump"));
+
+            _sampler.SetKeyDown(KeyCode.Space, false);
+            _input.Tick();
+            Assert.IsFalse(_input.GetButtonHeld("Jump"));
+
+            // New Input System source alone also satisfies the same action.
+            _sampler.SetGamepadButtonDown(GamepadButton.South, true);
+            _input.Tick();
+            Assert.IsTrue(_input.GetButtonHeld("Jump"));
+        }
+
+        [Test]
+        public void Axis_GamepadTrigger_UsedWhenLargerThanLegacyAxis()
+        {
+            var map = BuildMap(new InputActionBindingDefinition
+            {
+                ActionName = "Throttle",
+                Type = InputActionType.Axis,
+                LegacyAxisName = "Vertical",
+                GamepadAxis = GamepadAxisSource.RightTrigger
+            });
+            _input.RegisterActionMap(map);
+
+            _sampler.SetAxis("Vertical", 0.1f);
+            _sampler.SetGamepadTrigger(rightTrigger: true, value: 0.9f);
+            _input.Tick();
+
+            Assert.AreEqual(0.9f, _input.GetAxis("Throttle"), 0.0001f);
+        }
+
+        [Test]
+        public void Vector2_GamepadStick_UsedWhenLargerThanLegacyAxes()
+        {
+            var map = BuildMap(new InputActionBindingDefinition
+            {
+                ActionName = "Move",
+                Type = InputActionType.Vector2,
+                LegacyAxisNameX = "Horizontal",
+                LegacyAxisNameY = "Vertical",
+                GamepadStick = GamepadStickSource.LeftStick
+            });
+            _input.RegisterActionMap(map);
+
+            _sampler.SetAxis("Horizontal", 0.05f);
+            _sampler.SetAxis("Vertical", 0f);
+            _sampler.SetGamepadStick(GamepadStickSource.LeftStick, new Vector2(-1f, 0.5f));
+            _input.Tick();
+
+            Assert.AreEqual(new Vector2(-1f, 0.5f), _input.GetVector2("Move"));
+        }
+
+        [Test]
         public void GetActionState_UnregisteredAction_ReturnsNone()
         {
             Assert.AreEqual(InputActionState.None.IsPressed, _input.GetActionState("Missing").IsPressed);
@@ -189,7 +292,7 @@ namespace GameFramework.Input.Tests
         [Test]
         public void Pointer_WithActiveTouch_PrefersTouchOverMouse()
         {
-            _sampler.SetTouches(new RawTouch(0, new Vector2(5f, 6f), TouchPhase.Began));
+            _sampler.SetTouches(new RawTouch(0, new Vector2(5f, 6f), UnityEngine.TouchPhase.Began));
 
             _input.Tick();
 

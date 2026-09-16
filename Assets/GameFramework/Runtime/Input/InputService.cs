@@ -159,12 +159,9 @@ namespace GameFramework.Input
                 case InputActionType.Button:
                     return SampleButton(binding, previous);
                 case InputActionType.Axis:
-                    float axis = _sampler.GetAxisRaw(binding.LegacyAxisName);
-                    return new InputActionState(false, false, false, axis, Vector2.zero);
+                    return new InputActionState(false, false, false, SampleAxis(binding), Vector2.zero);
                 case InputActionType.Vector2:
-                    float x = _sampler.GetAxisRaw(binding.LegacyAxisNameX);
-                    float y = _sampler.GetAxisRaw(binding.LegacyAxisNameY);
-                    return new InputActionState(false, false, false, 0f, new Vector2(x, y));
+                    return new InputActionState(false, false, false, 0f, SampleVector2(binding));
                 default:
                     return InputActionState.None;
             }
@@ -184,6 +181,21 @@ namespace GameFramework.Input
                 isPressed = _sampler.GetMouseButton(binding.MouseButtons[i]);
             }
 
+            for (int i = 0; i < binding.NewInputKeyboardKeys.Length && !isPressed; i++)
+            {
+                isPressed = _sampler.GetKey(binding.NewInputKeyboardKeys[i]);
+            }
+
+            for (int i = 0; i < binding.NewInputMouseButtons.Length && !isPressed; i++)
+            {
+                isPressed = _sampler.GetMouseButton(binding.NewInputMouseButtons[i]);
+            }
+
+            for (int i = 0; i < binding.GamepadButtons.Length && !isPressed; i++)
+            {
+                isPressed = _sampler.GetGamepadButton(binding.GamepadButtons[i]);
+            }
+
             bool wasPressed = previous.IsPressed;
             return new InputActionState(
                 isPressed,
@@ -191,6 +203,45 @@ namespace GameFramework.Input
                 wasReleasedThisFrame: !isPressed && wasPressed,
                 axisValue: isPressed ? 1f : 0f,
                 vector2Value: Vector2.zero);
+        }
+
+        /// <summary>Combines the legacy axis with an optional gamepad trigger by taking whichever
+        /// has the larger magnitude this frame — so either source can drive the action without one
+        /// silently overriding the other when idle (idle reads as 0 from both).</summary>
+        private float SampleAxis(InputActionBindingDefinition binding)
+        {
+            float axis = _sampler.GetAxisRaw(binding.LegacyAxisName);
+
+            if (binding.GamepadAxis != GamepadAxisSource.None)
+            {
+                float gamepadValue = _sampler.GetGamepadTrigger(binding.GamepadAxis == GamepadAxisSource.RightTrigger);
+                if (Mathf.Abs(gamepadValue) > Mathf.Abs(axis))
+                {
+                    axis = gamepadValue;
+                }
+            }
+
+            return axis;
+        }
+
+        /// <summary>Combines the legacy axis pair with an optional gamepad stick/D-pad by taking
+        /// whichever has the larger magnitude this frame — see <see cref="SampleAxis"/>.</summary>
+        private Vector2 SampleVector2(InputActionBindingDefinition binding)
+        {
+            var vector = new Vector2(
+                _sampler.GetAxisRaw(binding.LegacyAxisNameX),
+                _sampler.GetAxisRaw(binding.LegacyAxisNameY));
+
+            if (binding.GamepadStick != GamepadStickSource.None)
+            {
+                Vector2 gamepadVector = _sampler.GetGamepadStick(binding.GamepadStick);
+                if (gamepadVector.sqrMagnitude > vector.sqrMagnitude)
+                {
+                    vector = gamepadVector;
+                }
+            }
+
+            return vector;
         }
 
         private void SamplePointers()

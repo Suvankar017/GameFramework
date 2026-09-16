@@ -3,7 +3,8 @@
     "rootNamespace": "GameFramework.Input",
     "references": [
         "GameFramework.Core",
-        "GameFramework.Runtime"
+        "GameFramework.Runtime",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -7,6 +7,8 @@ using GameFramework.Runtime.Bootstrap;
 using GameFramework.Runtime.Services;
 using GameFramework.UI;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 
 namespace GameFramework.Samples.Phase3Demo
 {
@@ -93,9 +95,13 @@ namespace GameFramework.Samples.Phase3Demo
             map.Actions.Add(new InputActionBindingDefinition
             {
                 ActionName = "Jump",
-                Type = InputActionType.Button,
+                Type = GameFramework.Input.InputActionType.Button,
+                // Legacy and New Input System sources bound side by side: whichever is active for
+                // this project's Active Input Handling setting satisfies the action.
                 KeyboardKeys = new[] { KeyCode.Space },
-                MouseButtons = new[] { 0 }
+                MouseButtons = new[] { 0 },
+                NewInputKeyboardKeys = new[] { Key.Space },
+                GamepadButtons = new[] { GamepadButton.South }
             });
             return map;
         }

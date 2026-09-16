@@ -5,11 +5,15 @@ tooling and target platforms.
 
 ## Status
 
-**Phase 3 — Player Experience Foundation.** Phase 0 laid the structural foundation, Phase 1 built
-Bootstrap/Services/Logging/GameState/SceneManagement, and Phase 2 added the infrastructure layer
-(Time, Timers, Events, Persistence, Settings). Phase 3 adds five reusable player-facing systems on
-top of that: Input, Localization, Audio, UI Foundation, and Feedback/Haptics. No progression,
-rewards, economy, or game-specific UI exist yet — see [Roadmap](#roadmap).
+**Phase 4 — Gameplay Infrastructure.** Phase 0 laid the structural foundation, Phase 1 built
+Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the infrastructure layer (Time,
+Timers, Events, Persistence, Settings), and Phase 3 added five reusable player-facing systems
+(Input, Localization, Audio, UI Foundation, Feedback/Haptics). Phase 4 adds generic gameplay
+infrastructure on top: a gameplay loop, entity/component utilities, object lifecycle, spawning,
+pooling, commands, interaction/targeting, and objectives/checkpoints — see
+[Gameplay Infrastructure](#gameplay-infrastructure). No player character, enemy AI, weapons,
+inventory, progression, economy, or other game-specific content exists yet — see
+[Roadmap](#roadmap).
 
 ## Target environment
 
@@ -29,16 +33,18 @@ Dependency direction is one-way, top to bottom. A lower layer must never referen
 ```text
 Game
   ↓
-Game Features
-  ↓
-GameFramework.PlayerSystems   (composition root: registers the five services below)
-  ↓
-GameFramework.UI  ──────┬──────────────┬──────────────┐
-  ↓                     ↓              ↓              ↓
+Game Features ─────────────────────────────────┐
+  ↓                                             ↓
+GameFramework.PlayerSystems              GameFramework.Gameplay
+(composition root: registers the             (Loop, Entities, Lifecycle, Spawning,
+ five Phase 3 services below)                  Pooling, Commands, Interaction, Objectives)
+  ↓                                             │
+GameFramework.UI  ──────┬──────────────┬───────┤ (no dependency either direction —
+  ↓                     ↓              ↓        │  siblings, see below)
 GameFramework.Localization  GameFramework.Audio  GameFramework.Feedback
   ↓                     ↓              ↓              ↓
 GameFramework.Input     └──────────────┴──────────────┘
-  ↓
+  ↓                                             ↓
 GameFramework.Runtime   (Bootstrap, Services, Diagnostics, State, SceneManagement,
   ↓                      Time, Timers, Events, Persistence, Settings)
 GameFramework.Core       (Validation, Extensions)
@@ -55,8 +61,16 @@ references Audio (to play a preset's cue), and Input/Localization/Audio have no 
 each other or on UI. `GameFramework.PlayerSystems` is the composition root that wires all five into
 `GameBootstrapper` (see [Player Systems Bootstrap](#player-systems-bootstrap)); none of Phase 0–2
 was modified to add it. Runtime assemblies must never reference Editor assemblies —
-`GameFramework.Editor` (added in Phase 3 for one small localization validation menu item) is
-Editor-only and referenced by nothing at runtime.
+`GameFramework.Editor` (added in Phase 3 for one small localization validation menu item, extended
+in Phase 4 for Gameplay config validation) is Editor-only and referenced by nothing at runtime.
+
+`GameFramework.Gameplay` (Phase 4) references only `GameFramework.Core`/`GameFramework.Runtime` —
+deliberately **not** `GameFramework.PlayerSystems` or any of Input/UI/Audio/Feedback. Gameplay
+Infrastructure and Player Experience are siblings that both sit on top of the Core Framework,
+neither depending on the other: nothing under `GameFramework.Gameplay.*` references an Input/UI/
+Audio/Feedback type. A game wanting both registers Phase 4's two services
+(`IGameplayService`/`IPoolService`) in its own `PlayerSystemsBootstrapper` subclass — see
+[Game Flow Integration](#game-flow-integration) — rather than Phase 4 hard-depending on Phase 3.
 
 Everything is wired together by `GameBootstrapper`, which now owns eight built-in services:
 
@@ -115,10 +129,29 @@ Assets/GameFramework/
 │   ├── Audio/                    GameFramework.Audio.asmdef (Phase 3)
 │   ├── Feedback/                 GameFramework.Feedback.asmdef (Phase 3)
 │   ├── UI/                       GameFramework.UI.asmdef (Phase 3)
-│   └── PlayerSystems/            GameFramework.PlayerSystems.asmdef (Phase 3 composition root)
+│   ├── PlayerSystems/            GameFramework.PlayerSystems.asmdef (Phase 3 composition root)
+│   └── Gameplay/                 GameFramework.Gameplay.asmdef (Phase 4)
+│       ├── Entities/             EntityId.cs, EntityIdentity.cs, ComponentLookup.cs
+│       ├── Lifecycle/            IGameplayObjectLifecycle.cs, GameplayObjectLifecycleRunner.cs,
+│       │                         GameplayObjectLifecycleState.cs
+│       ├── Spawning/             SpawnRequest.cs, SpawnResult.cs, SpawnFailureReason.cs,
+│       │                         ISpawnProvider.cs, InstantiateSpawnProvider.cs,
+│       │                         PooledSpawnProvider.cs, SpawnConfiguration.cs, Spawner.cs
+│       ├── Pooling/              GameObjectPool.cs, GameObjectPoolConfig.cs, PoolConfiguration.cs,
+│       │                         IPoolService.cs, PoolService.cs
+│       ├── Commands/             IGameplayCommand.cs, CommandResult.cs, CommandResultStatus.cs,
+│       │                         GameplayCommandInvoker.cs, GameplayCommandQueue.cs
+│       ├── Interaction/          IInteractable.cs, InteractionContext.cs, TargetingUtility.cs
+│       ├── Objectives/           IObjective.cs, ObjectiveBase.cs, ObjectiveState.cs,
+│       │                         ObjectiveEvents.cs, ObjectiveDefinition.cs, Checkpoint.cs
+│       └── (root)                IGameplayService.cs, GameplayService.cs, GameplayLoopDriver.cs,
+│                                  IGameplayLifecycle.cs, IGameplayTickable.cs,
+│                                  IGameplayFixedTickable.cs, IGameplayLateTickable.cs,
+│                                  GameplayLoopState.cs, GameplayBootstrapper.cs
 ├── Editor/
-│   ├── GameFramework.Editor.asmdef (Phase 3)
-│   └── Localization/             LocalizationTableValidator.cs
+│   ├── GameFramework.Editor.asmdef (Phase 3, extended Phase 4)
+│   ├── Localization/             LocalizationTableValidator.cs
+│   └── Gameplay/                 GameplayConfigValidator.cs (Phase 4)
 ├── Tests/
 │   ├── Editor/                          GameFramework.Core.Tests.asmdef (EditMode)
 │   │   ├── Validation/ , Extensions/
@@ -128,20 +161,21 @@ Assets/GameFramework/
 │   │   ├── Input/                       GameFramework.Input.Tests.asmdef (EditMode)
 │   │   ├── Localization/                GameFramework.Localization.Tests.asmdef (EditMode)
 │   │   ├── Audio/                       GameFramework.Audio.Tests.asmdef (EditMode)
-│   │   └── Feedback/                    GameFramework.Feedback.Tests.asmdef (EditMode)
+│   │   ├── Feedback/                    GameFramework.Feedback.Tests.asmdef (EditMode)
+│   │   └── Gameplay/                    GameFramework.Gameplay.Tests.asmdef (EditMode, Phase 4)
+│   │       ├── Entities/ , Lifecycle/ , Commands/ , Objectives/
 │   └── Runtime/                         GameFramework.Core.Tests.Runtime.asmdef (PlayMode)
 │       ├── Extensions/
 │       ├── Framework/                   GameFramework.Runtime.Tests.Runtime.asmdef (PlayMode)
 │       │   └── Bootstrap/
 │       ├── Audio/                       GameFramework.Audio.Tests.Runtime.asmdef (PlayMode)
 │       ├── UI/                          GameFramework.UI.Tests.Runtime.asmdef (PlayMode)
-│       └── PlayerSystems/               GameFramework.PlayerSystems.Tests.Runtime.asmdef (PlayMode)
+│       ├── PlayerSystems/               GameFramework.PlayerSystems.Tests.Runtime.asmdef (PlayMode)
+│       └── Gameplay/                    GameFramework.Gameplay.Tests.Runtime.asmdef (PlayMode, Phase 4)
+│           ├── Pooling/ , Spawning/ , Interaction/
 └── Documentation/
     └── Framework.md                     (this file)
 ```
-
-`Editor/` and `Samples/` folders (under `GameFramework/`) are still not created — no editor
-tooling exists, and every Phase 2 API is exercised in its own tests, so nothing needed a sample.
 
 ## Assemblies
 
@@ -153,21 +187,27 @@ tooling exists, and every Phase 2 API is exercised in its own tests, so nothing 
 | `GameFramework.Runtime.Tests` | `Tests/Editor/Runtime` | `GameFramework.Core`, `GameFramework.Runtime`, TestRunner | EditMode tests for `GameFramework.Runtime` (everything that doesn't need `Awake`/`DontDestroyOnLoad`). |
 | `GameFramework.Core.Tests.Runtime` | `Tests/Runtime` | `GameFramework.Core`, TestRunner | PlayMode tests for the subset of `GameFramework.Core` that Edit Mode cannot exercise. |
 | `GameFramework.Runtime.Tests.Runtime` | `Tests/Runtime/Framework` | `GameFramework.Core`, `GameFramework.Runtime`, TestRunner | PlayMode tests for `GameBootstrapper` (needs real `Awake`/`DontDestroyOnLoad`/`Update`). |
-| `GameFramework.Input` | `Runtime/Input` | `GameFramework.Core`, `GameFramework.Runtime` | Logical input actions, contexts, pointer/touch, gestures. |
+| `GameFramework.Input` | `Runtime/Input` | `GameFramework.Core`, `GameFramework.Runtime`, `Unity.InputSystem` | Logical input actions, contexts, pointer/touch, gestures. Legacy Input Manager and New Input System (keyboard/mouse/gamepad) bindings both supported per action. |
 | `GameFramework.Localization` | `Runtime/Localization` | `GameFramework.Core`, `GameFramework.Runtime`, `Unity.TextMeshPro` | Language tables, lookup/fallback, language-specific fonts/assets. |
 | `GameFramework.Audio` | `Runtime/Audio` | `GameFramework.Core`, `GameFramework.Runtime` | Pooled playback, categories/volumes, cues, music crossfade. |
 | `GameFramework.Feedback` | `Runtime/Feedback` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Audio` | Haptics abstraction, presets coordinating haptics + audio. |
-| `GameFramework.UI` | `Runtime/UI` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Audio`, `GameFramework.Feedback`, `Unity.TextMeshPro` | Layered canvases, screen stack, popups/modals, localized UI components. |
+| `GameFramework.UI` | `Runtime/UI` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Audio`, `GameFramework.Feedback`, `Unity.TextMeshPro` | Layered canvases (Screen Space - Overlay or Camera, via `UICanvasConfig`), screen stack, popups/modals, localized UI components. |
 | `GameFramework.PlayerSystems` | `Runtime/PlayerSystems` | all of the above + `GameFramework.Runtime` | Composition root: `PlayerSystemsBootstrapper`. |
-| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization` | Editor-only. Localization table validation menu item. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
-| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`). |
+| `GameFramework.Gameplay` | `Runtime/Gameplay` | `GameFramework.Core`, `GameFramework.Runtime` (sibling of `PlayerSystems` — no Input/UI/Audio/Feedback reference) | Gameplay loop, entity/component utilities, object lifecycle, spawning, pooling, commands, interaction/targeting, objectives/checkpoints. Composition root: `GameplayBootstrapper`. |
+| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay` | Editor-only. Localization table validation and Gameplay config validation menu items. |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
 Phase 3 is the opposite case: UI's dependency on Localization/Audio/Feedback (and Feedback's on
 Audio) is exactly the kind of one-way relationship an assembly boundary makes a compile error to
 violate, so each of the five systems — plus the `PlayerSystems` composition root and one small
-`Editor` assembly — got its own `.asmdef`. `GameFramework.UI.Tests` intentionally does **not**
+`Editor` assembly — got its own `.asmdef`. Phase 4 is closer to Phase 2's case internally (its eight
+subsystems share no dependency boundary worth enforcing against each other — Spawning depending on
+Pooling is the only real edge, and both are meant to be used together anyway) but still gets exactly
+one new assembly, `GameFramework.Gameplay`, specifically to keep it a compile-time-enforced sibling
+of `GameFramework.PlayerSystems` rather than a dependent of it — see
+[Architecture](#architecture). `GameFramework.UI.Tests` intentionally does **not**
 exist as an EditMode assembly: `UIScreen`/`UIPopup` test doubles are MonoBehaviours, and
 `AddComponent` refuses a script whose declaring assembly is Editor-only (`includePlatforms:
 ["Editor"]`) — discovered during Phase 3 development when EditMode `UIServiceTests` intermittently
@@ -190,13 +230,22 @@ Block-style namespaces only, never file-scoped. Current namespaces:
 - `GameFramework.Runtime.Events` — `IEventSubscription`, `IEventService`, `EventService`.
 - `GameFramework.Runtime.Persistence` — `IPersistenceStorage`, `IPersistenceSerializer`, `JsonPersistenceSerializer`, `FilePersistenceStorage`, `InMemoryPersistenceStorage`, `ISaveMigration`, `IPersistenceService`, `PersistenceService`.
 - `GameFramework.Runtime.Settings` — `SettingDefinition<T>`, `SettingChangedEvent`, `ISettingsService`, `SettingsService`.
-- `GameFramework.Input` — `IInputService`, `InputService`, `InputActionMapAsset`, `InputActionBindingDefinition`, `InputActionState`, `PointerState`, `InputContextDefinition`, `PointerGestureRecognizer`, `InputActionBuffer`.
+- `GameFramework.Input` — `IInputService`, `InputService`, `InputActionMapAsset`, `InputActionBindingDefinition`, `InputActionState`, `PointerState`, `InputContextDefinition`, `PointerGestureRecognizer`, `InputActionBuffer`, `NewInputMouseButton`, `GamepadAxisSource`, `GamepadStickSource`.
 - `GameFramework.Localization` — `ILocalizationService`, `LocalizationService`, `LocalizationTableAsset`, `LocalizationConfigAsset`, `LanguageInfo`, `LanguageChangedEvent`.
 - `GameFramework.Audio` — `IAudioService`, `AudioService`, `AudioCueAsset`, `AudioCategory`, `IAudioHandle`, `NullAudioHandle`, `IRandomSource`.
 - `GameFramework.Feedback` — `IFeedbackService`, `FeedbackService`, `HapticStrength`, `IHapticProvider`, `FeedbackPresetAsset`.
-- `GameFramework.UI` — `IUIService`, `UIService`, `UIScreen`, `UIPopup`, `UILayer`, `LocalizedTextBase`/`LocalizedTMPText`/`LocalizedText`/`LocalizedImage`, `UIButtonFeedback`.
+- `GameFramework.UI` — `IUIService`, `UIService`, `UIScreen`, `UIPopup`, `UILayer`, `UIRenderMode`, `UICanvasConfig`, `LocalizedTextBase`/`LocalizedTMPText`/`LocalizedText`/`LocalizedImage`, `UIButtonFeedback`.
 - `GameFramework.PlayerSystems` — `PlayerSystemsBootstrapper`.
+- `GameFramework.Gameplay` — `IGameplayService`, `GameplayService`, `GameplayBootstrapper`, `IGameplayLifecycle`, `IGameplayTickable`/`IGameplayFixedTickable`/`IGameplayLateTickable`, `GameplayLoopState`.
+- `GameFramework.Gameplay.Entities` — `EntityId`, `EntityIdentity`, `ComponentLookup`.
+- `GameFramework.Gameplay.Lifecycle` — `IGameplayObjectLifecycle`, `GameplayObjectLifecycleRunner`, `GameplayObjectLifecycleState`.
+- `GameFramework.Gameplay.Spawning` — `Spawner`, `SpawnRequest`, `SpawnResult`, `SpawnFailureReason`, `ISpawnProvider`, `InstantiateSpawnProvider`, `PooledSpawnProvider`, `SpawnConfiguration`.
+- `GameFramework.Gameplay.Pooling` — `GameObjectPool`, `GameObjectPoolConfig`, `PoolConfiguration`, `IPoolService`, `PoolService`.
+- `GameFramework.Gameplay.Commands` — `IGameplayCommand`, `CommandResult`, `CommandResultStatus`, `GameplayCommandInvoker`, `GameplayCommandQueue`.
+- `GameFramework.Gameplay.Interaction` — `IInteractable`, `InteractionContext`, `TargetingUtility`.
+- `GameFramework.Gameplay.Objectives` — `IObjective`, `ObjectiveBase`, `ObjectiveState`, `ObjectiveActivatedEvent`/`ObjectiveCompletedEvent`/`ObjectiveFailedEvent`, `ObjectiveDefinition`, `Checkpoint`, `CheckpointData`.
 - `GameFramework.Editor.Localization` — `LocalizationTableValidator` (Editor-only).
+- `GameFramework.Editor.Gameplay` — `GameplayConfigValidator` (Editor-only).
 
 A naming note: `GameFramework.Runtime.Time` and `GameFramework.Runtime.Timers` share a word with
 `UnityEngine.Time`/nothing, respectively, but that hasn't caused the ambiguity you might expect —
@@ -520,11 +569,28 @@ if (input.GetButtonDown("Jump")) { /* ... */ }
 Vector2 move = input.GetVector2("Move");
 ```
 
-**Devices.** Built on `UnityEngine.Input` (the legacy manager) rather than the newer Input System
-package, which this project doesn't have installed — legacy default axes like `"Horizontal"` and
-`"Fire1"` already blend keyboard and joystick with no Project Settings changes required. Real
-sampling goes through `IInputSampler` (`UnityInputSampler` in production); tests inject a fake, so
-button/axis/touch/pointer-over-UI logic is deterministic without a live device.
+**Devices — both the legacy Input Manager and the New Input System.** `com.unity.inputsystem` is
+now a project dependency and Project Settings > Player > Active Input Handling is set to **Both**,
+so `InputActionBindingDefinition` accepts bindings from either backend on the same logical action:
+`KeyboardKeys`/`MouseButtons`/`LegacyAxisName(X/Y)` (legacy Input Manager — legacy default axes like
+`"Horizontal"` still blend keyboard and joystick with no extra Project Settings changes) alongside
+`NewInputKeyboardKeys`/`NewInputMouseButtons`/`GamepadButtons`/`GamepadAxis`/`GamepadStick` (New
+Input System). Every source list is additive — bind only legacy, only new, or both; whichever is
+physically active satisfies the action. For `Axis`/`Vector2` actions, the legacy value and the
+gamepad value are combined by taking whichever has the larger magnitude that frame (`InputService.
+SampleAxis`/`SampleVector2`), so an idle gamepad never overrides an active keyboard axis and vice
+versa. Real sampling goes through `IInputSampler` (`UnityInputSampler` in production); tests inject
+a fake, so button/axis/gamepad/touch/pointer-over-UI logic is deterministic without a live device.
+
+`UnityInputSampler`'s legacy members are compiled behind `ENABLE_LEGACY_INPUT_MANAGER` and its New
+Input System members behind `ENABLE_INPUT_SYSTEM` — the same two scripting defines Unity itself
+sets from Active Input Handling — so the sampler degrades to a safe "no input" no-op (never throws)
+for whichever backend a project doesn't have active, rather than assuming "Both" specifically.
+Gamepad support (`GamepadButton`/`GamepadAxisSource`/`GamepadStickSource`, via `Gamepad.current`)
+exists only through the New Input System — the legacy Input Manager has no cross-platform gamepad
+API of its own. Touch/pointer sampling (below) intentionally stays on the legacy `Input.touches`
+path, since it already works correctly under "Both" and a New Input System `Touchscreen.current`
+path would duplicate it for no behavioral gain; this is a scoping decision, not an oversight.
 
 **Contexts.** `PushContext`/`PopContext` maintain a stack; only the top context's allowed actions
 are enabled, and `GetActionState`/`GetButtonDown`/etc. enforce this automatically — a popup pushing
@@ -646,6 +712,19 @@ ConfirmPopup popup = ui.OpenPopup(confirmPopupPrefab);      // modal by default
 popup.Close(UIPopupResult.Confirmed);
 ```
 
+**Render mode — Screen Space Overlay or Camera.** Every layer's `Canvas.renderMode` comes from the
+`UICanvasConfig` passed to `UIService`'s constructor: `UIRenderMode.ScreenSpaceOverlay` (default —
+the original zero-setup behavior, no camera dependency) or `UIRenderMode.ScreenSpaceCamera`, which
+sets `canvas.worldCamera`/`canvas.planeDistance` from `UICanvasConfig.WorldCamera`/`PlaneDistance`
+on every layer — the mode many 2D games need so UI shares a camera stack with the world (URP camera
+stacking, camera-driven zoom/shake or post-processing that should also affect UI). If Camera mode is
+requested with no `WorldCamera` assigned, `UIService` logs one warning and falls back to Overlay for
+every layer rather than silently producing invisible UI. `PlayerSystemsBootstrapper` exposes this as
+two Inspector fields (`UI Render Mode`, `UI Camera`) and builds the config via its overridable
+`CreateUIService()` — a game needing per-layer plane distances or other customization overrides that
+one method instead of duplicating `RegisterServices`. `WorldSpace` is intentionally not exposed —
+see `UIRenderMode`'s doc comment for why.
+
 **Screens.** `UIScreen` lifecycle is `Closed → Opened → (Hidden while covered) → Opened → Closed`.
 `OpenScreen<T>` hides the current top (if any) before pushing the new one; `CloseTopScreen`/
 `screen.Close()` pop and destroy the top, then show whatever is now on top again. `CloseScreen`
@@ -705,6 +784,239 @@ game that needs true per-strength haptics must integrate a native plugin and sup
 `IHapticProvider` (the seam this interface exists for). This is documented as a real platform
 constraint, not glossed over as full haptic support.
 
+## Gameplay Infrastructure
+
+Phase 4. Reusable gameplay building blocks that stay independent of any specific game's content —
+no player character, enemy AI, weapons, inventory, progression, or economy lives here (see
+[Roadmap](#roadmap)). Registered services: `IGameplayService` (the gameplay loop) and
+`IPoolService` (named pool registry) — see [Game Flow Integration](#game-flow-integration) for how
+a game registers them. Everything else (`Spawner`, `GameObjectPool`, commands, interactables,
+objectives) is scene/object-lifetime and constructed directly, never a service — see section 96 of
+the Phase 4 brief's ownership guidance, reflected throughout below.
+
+### Gameplay Loop
+
+`IGameplayService` gives gameplay participants predictable lifecycle hooks without forcing every
+object to inherit from a framework base class, and without duplicating Unity's PlayerLoop or
+`IGameStateService`'s state machine:
+
+```csharp
+IGameplayService gameplay = GameBootstrapper.Instance.Services.Get<IGameplayService>();
+gameplay.BeginPlay(); // typically called from the game's own "Gameplay" IGameState.Enter()
+
+public class Enemy : MonoBehaviour, IGameplayLifecycle, IGameplayTickable
+{
+    private void OnEnable() => gameplayService.RegisterLifecycle(this);
+    private void OnDisable() => gameplayService.UnregisterLifecycle(this);
+
+    public void OnGameplayInitialize() { /* once, ever */ }
+    public void OnGameplayBeginPlay() { /* every session start */ }
+    public void OnGameplayPause() { }
+    public void OnGameplayResume() { }
+    public void OnGameplayShutdown() { /* unsubscribe, cancel timers, clear refs */ }
+
+    public void GameplayTick(float deltaTime) { /* instead of Update() */ }
+}
+```
+
+**Phases.** Exactly the five named in the brief — Initialize (once, at registration), BeginPlay,
+Pause, Resume, Shutdown — plus three independent opt-in tick interfaces
+(`IGameplayTickable`/`IGameplayFixedTickable`/`IGameplayLateTickable`) so a participant only
+implements the phase(s) it needs; nothing is forced to implement all of them. A late-registering
+participant (e.g. an enemy spawned mid-level) immediately receives whatever phases it missed
+(Initialize, then BeginPlay, then Pause if currently paused) so it ends up in the same state as
+everyone else, with no ordering bugs from registering late.
+
+**Pause is fully reactive — never called directly.** `GameplayService.Tick()` polls
+`ITimeService.IsPaused` once per frame and edge-detects the transition itself; nothing in this
+framework ever writes `Time.timeScale`. A game pauses exactly the way it always would
+(`timeService.Pause()`), and every registered `IGameplayTickable` simply stops being ticked at all
+while paused — not ticked with a zero delta — while UI/Audio (on entirely separate paths, never
+routed through this service) keep working, satisfying "Gameplay updates stop, UI continues" with no
+special-casing anywhere.
+
+**FixedUpdate/LateUpdate, without extending `IUpdatableService`.** Regular per-frame ticking reuses
+`IUpdatableService.Tick()` exactly like every other Phase 2/3 service. Fixed/Late ticking needed a
+Unity callback a plain C# service can't receive, so `GameplayService` creates its own tiny
+`DontDestroyOnLoad` driver GameObject (`GameplayLoopDriver`) in `Initialize` — the same pattern
+`AudioApplicationLifecycleHook` already established for Audio's application-pause callback — rather
+than adding Fixed/Late methods to `IUpdatableService` itself, which would have forced every existing
+`IUpdatableService` implementer (just `TimerService` today) to grow two new no-op methods.
+
+### Entity / Component Utilities
+
+Not an ECS — an entity is still just a GameObject with MonoBehaviours. `EntityId` is a
+process-lifetime-unique monotonic counter, explicitly not `GetInstanceID()` (which is reused after
+destruction and meaningless across a save/load) and not itself persisted — a game that needs an
+identity to survive save/load persists the assigned value itself through
+`IPersistenceService`, per [Persistence](#persistence); this does not become a second identity/save
+system. `EntityIdentity` is an optional component that assigns one on `Awake`; most GameObjects
+don't need it. `ComponentLookup.RequireInParent<T>`/`RequireInChildren<T>` fill the one gap
+`[RequireComponent]` doesn't cover (same-GameObject requirements should still just use
+`[RequireComponent]`) — named static methods, not extension methods, specifically so a hierarchy
+walk is always visible at the call site.
+
+### Object Lifecycle
+
+`IGameplayObjectLifecycle` (`Initialize`/`Activate`/`Deactivate`/`Dispose`) is a *composition*, not
+inheritance: hold a `GameplayObjectLifecycleRunner` as a field, which guards the phases so
+`Initialize` really only ever fires once regardless of how many times the object is later reused —
+the exact guarantee Pooling needs to make "Get from pool" behave differently from "freshly
+instantiated" only where that's actually intended:
+
+```csharp
+public class Projectile : MonoBehaviour, IGameplayObjectLifecycle
+{
+    private GameplayObjectLifecycleRunner _lifecycle;
+    private void Awake() { _lifecycle = new GameplayObjectLifecycleRunner(this); _lifecycle.Initialize(); }
+    public void Initialize() { /* cache components - once, ever */ }
+    public void Activate() { /* reset health/timers - every reuse */ }
+    public void Deactivate() { /* unsubscribe, cancel timers - every reuse */ }
+    public void Dispose() { /* release permanent resources - once, ever */ }
+}
+```
+
+A simple object with no meaningful reset state doesn't need to implement this interface at all —
+`GameObjectPool` (below) still pools it correctly, it just gets plain `SetActive(true/false)`.
+
+### Spawning
+
+`Spawner` (scene/object-lifetime `MonoBehaviour`, not a service) answers what/where/when/how-many
+and delegates *how* to an `ISpawnProvider` — swapping `InstantiateSpawnProvider` for
+`PooledSpawnProvider` makes it pooled without any calling code changing:
+
+```csharp
+SpawnResult result = spawner.TrySpawn(); // or TrySpawn(position, rotation), or a full SpawnRequest
+if (result.Success) { /* use result.Instance */ }
+else Log.Warning("Game", $"Spawn failed: {result.FailureReason}");
+
+spawner.SetProvider(new PooledSpawnProvider(myPool)); // opt into pooling, no other code changes
+```
+
+Limits (`MaxActiveInstances`, `MaxTotalInstances`, `SpawnCooldownSeconds`) are optional (0/0f =
+unlimited) and checked before the provider is ever called; a `SpawnConfiguration` asset can supply
+prefab + limits as a designer-authored preset instead of per-instance Inspector fields. Failures are
+a `SpawnResult`/`SpawnFailureReason`, never an exception or a silent no-op.
+
+### Pooling
+
+`GameObjectPool` wraps `UnityEngine.Pool.ObjectPool<T>` (built into Unity since 2021.1) rather than
+reimplementing a free-list, adding the Unity-specific parts on top:
+
+```csharp
+var pool = new GameObjectPool(prefab, new GameObjectPoolConfig { DefaultCapacity = 10, MaxSize = 100, PrewarmCount = 10 });
+GameObject instance = pool.Get(position, rotation);
+pool.Release(instance); // never Object.Destroy a pooled instance directly
+```
+
+**Lifecycle** — `Get` activates the GameObject and calls `Activate()` on every component
+implementing `IGameplayObjectLifecycle` (found once per instance via a reused, non-allocating
+`GetComponents` buffer — never per-frame); `Release` calls `Deactivate()` and deactivates it,
+reparenting it back under the pool's own container; an instance released beyond `MaxSize` is
+destroyed instead (calling `Dispose()` first) rather than retained unboundedly. Prewarming (opt-in,
+0 by default) cycles each instance through Activate/Deactivate once, since `ObjectPool<T>` has no
+lower-level way to seed its free list without going through Get/Release.
+
+**Ownership.** Every instance lives under a container Transform the pool creates
+(`DontDestroyOnLoad`, for an application-lifetime pool) or one you supply (a plain scene-local
+Transform, disposed alongside the scene that owns it, for a scene-lifetime pool) — see
+`IPoolService`'s doc comment for when to register a pool there (application-lifetime, shared by key)
+versus just constructing a `GameObjectPool` directly (any other lifetime).
+
+**Safety, not just happy-path.** `Release` catches `ObjectPool<T>`'s own duplicate-release detection
+(`collectionCheck: true`) and logs instead of letting the exception escape; `Get` detects a pooled
+instance that was destroyed externally (e.g. a scene-scoped pool's scene unloading without the pool
+being disposed first) and transparently creates a replacement rather than handing back a broken
+reference — both are covered by `GameObjectPoolTests`, not just asserted in comments.
+
+### Commands
+
+`IGameplayCommand` (`CanExecute`/`Execute`) decouples a discrete gameplay action's request from its
+execution, with no undo/redo and no `Dictionary<string, object>` payload — each concrete command
+carries its own strongly-typed fields:
+
+```csharp
+GameplayCommandInvoker.Invoke(new OpenDoorCommand(door, keyId));
+// CanExecute() == false -> CommandResultStatus.Rejected, Execute() never called
+// Execute() returning Failure -> logged automatically
+```
+
+`GameplayCommandQueue` is an explicitly-instantiated, optional FIFO for the (uncommon) case where
+commands must run sequentially rather than immediately — nothing is global, and invoking a command
+directly through `GameplayCommandInvoker` adds no latency.
+
+### Interaction / Targeting
+
+`IInteractable` (`CanInteract`/`Interact`) takes a deliberately minimal `InteractionContext`
+(Interactor, Target, Position, Direction only — no input state, no free-form context slot) so it
+stays a small, composable contract rather than a "universal interaction object." Cooldowns are
+intentionally not part of the contract — compose them separately per interactable if needed.
+
+`TargetingUtility` provides small, allocation-conscious helpers — non-allocating overlap queries
+(`FindTargetsInRadius`/`FindTargetsInRadius2D`, caller-owned buffer and explicit layer mask),
+`GetClosest`/`GetClosest2D`, and a cheap dot-product `IsWithinViewCone` cone check meant to run
+*before* a physics query to cull candidates. This is not an AI targeting system — no line-of-sight
+raycasting, priority scoring, or perception model is implemented.
+
+**Decoupled from Input, by construction.** Nothing under `GameFramework.Gameplay.Interaction`
+references `GameFramework.Input`. A game's own code reads `IInputService.GetButtonDown("Interact")`
+and then calls into interaction/targeting itself — the framework never calls Input APIs from
+gameplay infrastructure.
+
+### Objectives / Checkpoints
+
+`ObjectiveBase` (`Inactive → Active → Completed|Failed → Inactive` via `Reset`) owns the state
+machine and event publication only — a game subclasses it and calls `Complete()`/`Fail()` when its
+own condition is met; no concrete objective ("Collect 10 Coins") exists in the framework. Invalid
+transitions are rejected with a logged warning, never an exception or a silent state change:
+
+```csharp
+public class CollectCoinsObjective : ObjectiveBase
+{
+    public CollectCoinsObjective(string id, IEventService events) : base(id, events) { }
+    public void OnCoinCollected() { if (++_collected >= _target) Complete(); }
+}
+
+events.Subscribe<ObjectiveCompletedEvent>(e => Log.Info("Game", $"Objective '{e.ObjectiveId}' complete"));
+```
+
+State changes publish `ObjectiveActivatedEvent`/`ObjectiveCompletedEvent`/`ObjectiveFailedEvent`
+through `IEventService` — the same Phase 2 Event System every other cross-system notification uses,
+not a separate mechanism. The `IEventService` passed to the constructor is optional (null just skips
+publishing), so an objective is fully unit-testable with zero service wiring.
+
+`Checkpoint` (a `MonoBehaviour` marking a scene location) and `CheckpointData` (its serializable
+payload — Id/Position/Rotation) carry data only: no automatic respawn, and no second save system —
+persist `CheckpointData` through `IPersistenceService` exactly like any other save data if a game
+needs it to survive across sessions. There is deliberately no aggregate "objective tracker" or
+progression layer on top — that would start to be Level Progression, out of Phase 4's scope.
+
+### Game Flow Integration
+
+No new GameManager. `GameplayBootstrapper` (`GameFramework.Gameplay`) is a `GameBootstrapper`
+subclass — sibling to `PlayerSystemsBootstrapper`, not descending from it (see
+[Architecture](#architecture)) — that registers `IGameplayService`/`IPoolService` the same way every
+other phase's bootstrapper subclass adds its own services. A game wanting both Player Systems and
+Gameplay Infrastructure combines them in its own small subclass:
+
+```csharp
+public class MyGameBootstrapper : PlayerSystemsBootstrapper
+{
+    protected override void RegisterServices(IServiceRegistry registry)
+    {
+        base.RegisterServices(registry); // Phase 1/2/3
+        registry.Register<IGameplayService>(new GameplayService());
+        registry.Register<IPoolService>(new PoolService());
+    }
+}
+```
+
+Everything else follows from decisions already described above rather than new integration code:
+gameplay pausing reads `ITimeService.IsPaused` (never writes `Time.timeScale`); a spawn/pool/
+objective/interaction failure is a typed result/log, never a `GameManager`-style global flag; and no
+Gameplay type references Input/UI/Audio/Feedback, so "UI/Audio/Feedback integration remains
+decoupled" holds by construction, not by convention alone.
+
 ## Testing
 
 - Everything in Phase 2 that doesn't need Unity's per-frame lifecycle is EditMode-tested,
@@ -736,6 +1048,21 @@ constraint, not glossed over as full haptic support.
   — see [Assemblies](#assemblies)) confirms real `GameObject`/`Canvas`/`Destroy` behavior, and
   `PlayerSystemsBootstrapperPlayModeTests` confirms all five Phase 3 services actually initialize
   together through `GameBootstrapper.Awake`, alongside Phase 1/2's eight.
+- Phase 4's `GameFramework.Gameplay.Tests` (EditMode) covers everything with no real GameObject
+  lifecycle dependency: `GameplayObjectLifecycleRunnerTests` (phase ordering/guards),
+  `GameplayCommandTests`, `ObjectiveBaseTests` (including event publication via a real
+  `EventService`, and that a null `IEventService` still transitions state correctly),
+  `EntityIdTests`, and `GameplayServiceTests` (loop/pause/tick behavior against a fake
+  `ITimeService`, reusing the same `MarkInitialized`-based registry pattern Phase 3 established —
+  `GameFramework.Gameplay.Tests`/`.Tests.Runtime` were added to `GameFramework.Runtime`'s
+  `AssemblyInfo.cs` `InternalsVisibleTo` list for this).
+- `GameFramework.Gameplay.Tests.Runtime` (PlayMode) covers what genuinely needs real GameObjects or
+  physics: `GameObjectPoolTests` (get/release/reuse, prewarm, growth beyond default capacity, max
+  size destroying excess, duplicate release, an instance destroyed externally being transparently
+  replaced, and Dispose) and `SpawnerTests` (limits, cooldown via a fake `ITimeService`, events, and
+  swapping in a `PooledSpawnProvider`) both instantiate/destroy real GameObjects;
+  `TargetingUtilityTests` exercises real `Physics`/`Physics2D` overlap queries against real
+  Colliders, which an EditMode fake could not do meaningfully.
 
 ## Phase 0 — Core utilities
 
@@ -768,9 +1095,18 @@ extensions over many speculative ones.
 
 ## Roadmap
 
-Phase 3 deliberately does **not** include: Progression, Rewards, Currency, Inventory, Economy,
+Phase 3 deliberately did **not** include: Progression, Rewards, Currency, Inventory, Economy,
 Tutorial, Pooling (beyond Audio's own internal voice pool, which exists to solve a real,
 Phase-3-scoped problem), Ads, Analytics, IAP, Remote Config, Feature Flags, Notifications, or any
-game-specific menu/HUD/screen content. Planned next:
+game-specific menu/HUD/screen content — [Pooling](#pooling) and [Spawning](#spawning) are Phase 4's
+answer to the general-purpose version of that gap; Phase 3's voice pool remains Audio-internal.
 
-- **Phase 4** — Gameplay Infrastructure.
+Phase 4 deliberately does **not** include: Player Character, Enemy AI, Weapons, Combat, Inventory,
+Currency, Economy, Quests, Level Progression, Rewards, Tutorial, Ads, Analytics, IAP, Remote Config,
+Leaderboards, Multiplayer, or any game-specific vehicle/controller — these consume Phase 4's
+infrastructure (commands, interaction, objectives, spawning, pooling) rather than living inside it.
+A general-purpose Tick Scheduler/Job System/ECS update graph was also deliberately not built now —
+`IGameplayService`'s three tick interfaces are kept forward-compatible with one (see
+[Gameplay Loop](#gameplay-loop)), not a substitute for it. Planned next:
+
+- **Phase 5** — Performance, Tick System, Optimization, Memory & Resource Management.

@@ -5,6 +5,7 @@ using GameFramework.Localization;
 using GameFramework.Runtime.Bootstrap;
 using GameFramework.Runtime.Services;
 using GameFramework.UI;
+using UnityEngine;
 
 namespace GameFramework.PlayerSystems
 {
@@ -20,6 +21,14 @@ namespace GameFramework.PlayerSystems
     /// </summary>
     public class PlayerSystemsBootstrapper : GameBootstrapper
     {
+        [Header("UI")]
+        [Tooltip("Screen Space - Overlay (default, zero setup) or Screen Space - Camera, for a 2D " +
+                 "game where UI needs to share a camera stack with the world. See UICanvasConfig.")]
+        [SerializeField] private UIRenderMode _uiRenderMode = UIRenderMode.ScreenSpaceOverlay;
+
+        [Tooltip("Required when UI Render Mode is Screen Space - Camera; ignored otherwise.")]
+        [SerializeField] private Camera _uiCamera;
+
         protected override void RegisterServices(IServiceRegistry registry)
         {
             base.RegisterServices(registry);
@@ -27,8 +36,21 @@ namespace GameFramework.PlayerSystems
             registry.Register<IInputService>(new InputService());
             registry.Register<ILocalizationService>(new LocalizationService());
             registry.Register<IAudioService>(new AudioService());
-            registry.Register<IUIService>(new UIService());
+            registry.Register<IUIService>(CreateUIService());
             registry.Register<IFeedbackService>(new FeedbackService());
+        }
+
+        /// <summary>Builds the <see cref="UIService"/> instance <see cref="RegisterServices"/>
+        /// registers. Override to customize <see cref="UICanvasConfig"/> further (e.g. a
+        /// non-default <see cref="UICanvasConfig.PlaneDistance"/>) instead of duplicating
+        /// <see cref="RegisterServices"/> entirely.</summary>
+        protected virtual UIService CreateUIService()
+        {
+            return new UIService(new UICanvasConfig
+            {
+                RenderMode = _uiRenderMode,
+                WorldCamera = _uiCamera
+            });
         }
     }
 }

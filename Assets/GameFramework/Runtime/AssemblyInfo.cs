@@ -14,3 +14,8 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("GameFramework.Audio.Tests.Runtime")]
 [assembly: InternalsVisibleTo("GameFramework.Feedback.Tests")]
 [assembly: InternalsVisibleTo("GameFramework.UI.Tests.Runtime")]
+
+// Phase 4 gameplay test assemblies reuse the same pattern to build a minimal, already-initialized
+// ServiceRegistry (e.g. with a fake ITimeService) for testing GameplayService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.Gameplay.Tests")]
+[assembly: InternalsVisibleTo("GameFramework.Gameplay.Tests.Runtime")]
