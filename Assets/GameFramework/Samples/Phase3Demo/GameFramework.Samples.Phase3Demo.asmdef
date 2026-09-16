@@ -10,7 +10,8 @@
         "GameFramework.Feedback",
         "GameFramework.UI",
         "GameFramework.PlayerSystems",
-        "Unity.TextMeshPro"
+        "Unity.TextMeshPro",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -8,7 +8,10 @@ namespace GameFramework.Input
     /// Framework input abstraction. Game code asks for a logical action ("Jump", "Move") rather
     /// than a physical device: Physical Input → Input Mapping → Logical Action → Game Feature.
     /// State is sampled once per frame (see <see cref="Runtime.Services.IUpdatableService"/>) and
-    /// cached — callers never trigger a device query themselves.
+    /// cached — callers never trigger a device query themselves. Each action's
+    /// <see cref="InputActionBindingDefinition"/> can bind legacy Input Manager sources, New Input
+    /// System sources (keyboard/mouse/gamepad), or both at once — see
+    /// <see cref="InputActionBindingDefinition"/> for how the two are merged.
     /// </summary>
     public interface IInputService : IGameService
     {

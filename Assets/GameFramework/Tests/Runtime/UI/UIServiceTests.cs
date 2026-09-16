@@ -64,6 +64,65 @@ namespace GameFramework.UI.Tests
         }
 
         [Test]
+        public void Initialize_DefaultConfig_UsesScreenSpaceOverlay()
+        {
+            foreach (UILayer layer in System.Enum.GetValues(typeof(UILayer)))
+            {
+                Canvas canvas = _ui.GetLayerRoot(layer).GetComponent<Canvas>();
+                Assert.AreEqual(RenderMode.ScreenSpaceOverlay, canvas.renderMode);
+            }
+        }
+
+        [Test]
+        public void Initialize_ScreenSpaceCameraWithCamera_ConfiguresEveryCanvasForThatCamera()
+        {
+            Camera camera = CreateTemplate<Camera>();
+            var cameraUi = new UIService(new UICanvasConfig
+            {
+                RenderMode = UIRenderMode.ScreenSpaceCamera,
+                WorldCamera = camera,
+                PlaneDistance = 5f
+            });
+            cameraUi.Initialize(new ServiceRegistry());
+
+            try
+            {
+                foreach (UILayer layer in System.Enum.GetValues(typeof(UILayer)))
+                {
+                    Canvas canvas = cameraUi.GetLayerRoot(layer).GetComponent<Canvas>();
+                    Assert.AreEqual(RenderMode.ScreenSpaceCamera, canvas.renderMode);
+                    Assert.AreEqual(camera, canvas.worldCamera);
+                    Assert.AreEqual(5f, canvas.planeDistance);
+                }
+            }
+            finally
+            {
+                cameraUi.Shutdown();
+            }
+        }
+
+        [Test]
+        public void Initialize_ScreenSpaceCameraWithoutCamera_FallsBackToOverlay()
+        {
+            var cameraUi = new UIService(new UICanvasConfig
+            {
+                RenderMode = UIRenderMode.ScreenSpaceCamera,
+                WorldCamera = null
+            });
+            cameraUi.Initialize(new ServiceRegistry());
+
+            try
+            {
+                Canvas canvas = cameraUi.GetLayerRoot(UILayer.Game).GetComponent<Canvas>();
+                Assert.AreEqual(RenderMode.ScreenSpaceOverlay, canvas.renderMode);
+            }
+            finally
+            {
+                cameraUi.Shutdown();
+            }
+        }
+
+        [Test]
         public void OpenScreen_OpensAndBecomesCurrentScreen()
         {
             TestScreen screen = _ui.OpenScreen(CreateTemplate<TestScreen>());

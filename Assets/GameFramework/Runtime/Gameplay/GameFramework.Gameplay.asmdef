@@ -1,0 +1,17 @@
+{
+    "name": "GameFramework.Gameplay",
+    "rootNamespace": "GameFramework.Gameplay",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -4,7 +4,8 @@
     "references": [
         "GameFramework.Core",
         "GameFramework.Runtime",
-        "GameFramework.Localization"
+        "GameFramework.Localization",
+        "GameFramework.Gameplay"
     ],
     "includePlatforms": [
         "Editor"
