@@ -24,3 +24,11 @@ using System.Runtime.CompilerServices;
 // already-initialized ServiceRegistry (e.g. with a fake ITimeService) for testing TickService and
 // PerformanceMonitorService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.Performance.Tests")]
+
+// Phase 6 progression test assemblies reuse the same pattern to build a minimal,
+// already-initialized ServiceRegistry (a real EventService/PersistenceService-over-
+// InMemoryPersistenceStorage plus a fake ITimeService) for testing Economy/Inventory/Experience/
+// Unlock/Reward services in isolation.
+[assembly: InternalsVisibleTo("GameFramework.Progression.Tests")]
+[assembly: InternalsVisibleTo("GameFramework.Unlocks.Tests")]
+[assembly: InternalsVisibleTo("GameFramework.Rewards.Tests")]

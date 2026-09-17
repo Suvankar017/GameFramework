@@ -1,0 +1,20 @@
+{
+    "name": "GameFramework.Samples.Phase6Demo",
+    "rootNamespace": "GameFramework.Samples.Phase6Demo",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Progression",
+        "GameFramework.Unlocks",
+        "GameFramework.Rewards"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

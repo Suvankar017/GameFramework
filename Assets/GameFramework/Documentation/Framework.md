@@ -5,19 +5,23 @@ tooling and target platforms.
 
 ## Status
 
-**Phase 5 — Performance, Optimization & Runtime Management.** Phase 0 laid the structural
-foundation, Phase 1 built Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the
+**Phase 6 — Progression, Rewards, Economy & Inventory.** Phase 0 laid the structural foundation,
+Phase 1 built Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the
 infrastructure layer (Time, Timers, Events, Persistence, Settings), Phase 3 added five reusable
-player-facing systems (Input, Localization, Audio, UI Foundation, Feedback/Haptics), and Phase 4
-added generic gameplay infrastructure (a gameplay loop, entity/component utilities, object
-lifecycle, spawning, pooling, commands, interaction/targeting, and objectives/checkpoints — see
-[Gameplay Infrastructure](#gameplay-infrastructure)). Phase 5 adds a cross-cutting performance
-layer on top of all of it — profiling/frame diagnostics, a centralized tick system, pooling
-hardening, a lightweight resource-loading abstraction, mobile performance utilities, memory
-diagnostics, and configurable performance budgets — see
-[Performance Infrastructure](#performance-infrastructure). It measures and hardens what already
-exists; it does not add game-specific content. No player character, enemy AI, weapons, inventory,
-progression, economy, or other game-specific content exists yet — see [Roadmap](#roadmap).
+player-facing systems (Input, Localization, Audio, UI Foundation, Feedback/Haptics), Phase 4 added
+generic gameplay infrastructure (a gameplay loop, entity/component utilities, object lifecycle,
+spawning, pooling, commands, interaction/targeting, and objectives/checkpoints — see
+[Gameplay Infrastructure](#gameplay-infrastructure)), and Phase 5 added a cross-cutting performance
+layer (profiling, a centralized tick system, pooling hardening, resource loading, mobile
+utilities, memory diagnostics, performance budgets — see
+[Performance Infrastructure](#performance-infrastructure)). Phase 6 adds the framework's first
+player-progression content systems — Economy (multi-currency balances), Inventory (item
+ownership/quantities), Experience (levels/XP), Unlocks (composable requirement-gated content), and
+Rewards (idempotent, transaction-safe grant orchestration across all four) — see
+[Progression, Economy, Inventory, Unlocks & Rewards](#progression-economy-inventory-unlocks--rewards).
+The framework still defines no concrete currencies, items, levels, or rewards for any specific
+game — no player character, enemy AI, weapons, quests, achievements, economy backend, or IAP exists
+yet — see [Roadmap](#roadmap).
 
 ## Target environment
 
@@ -1374,6 +1378,230 @@ stats, tickable counts, pool statistics, memory). Every number it prints comes f
 code path - see this repository's Phase 5 completion report for the specific measurements one run of
 this scene produced, and this section's remarks throughout on what those numbers do and don't prove.
 
+## Progression, Economy, Inventory, Unlocks & Rewards
+
+Phase 6. Three assemblies, one dependency chain, matching the real one-way relationships between
+them (the same reasoning Phase 3 used to split UI from Localization/Audio/Feedback):
+
+```text
+GameFramework.Progression   (Economy, Inventory, Experience — mutually independent leaves,
+                              one assembly, like Phase 2's five modules)
+        ↓
+GameFramework.Unlocks       (requirement types reference Economy/Inventory/Experience's
+                              read APIs)
+        ↓
+GameFramework.Rewards       (orchestrates all four; composition root: ProgressionBootstrapper)
+```
+
+**Definitions vs. state, strictly separated.** Every `*Definition` ScriptableObject
+(`CurrencyDefinition`, `ItemDefinition`, `ProgressionCurveDefinition`, `UnlockDefinition`,
+`RewardDefinition`) is pure authoring data — id/display text/bounds only, exposed as read-only
+properties over private `[SerializeField]`s, never mutated at runtime. Every mutable balance/
+quantity/level/unlocked-set/claimed-set lives inside the corresponding service
+(`EconomyService`/`InventoryService`/`ExperienceService`/`UnlockService`/`RewardService`), never on
+the definition asset — the project's rule against treating a shared ScriptableObject as mutable
+player-save-state is enforced by construction here, not just by convention.
+
+**Ids are stable, designer-authored strings**, not runtime-generated — `CurrencyId`/`ItemId`/
+`UnlockId`/`RewardId` are thin `readonly struct` wrappers (the same shape as Phase 4's `EntityId`,
+but string-backed instead of a process-lifetime counter, because these must survive save data and
+content changes across sessions).
+
+**Persistence: one save key per domain, not one shared blob.** Each service persists itself
+independently (`"GameFramework.Progression.Economy"`, `"...Inventory"`, `"...Experience"`,
+`"GameFramework.Unlocks"`, `"GameFramework.Rewards"`) through the existing Phase 2
+`IPersistenceService`, using the exact same explicit `Save()`/`Load()` + dirty-flag-on-`Shutdown()`
+policy `SettingsService` already established — nothing here writes to disk on every mutation, and
+nothing introduces a second persistence layer or a monolithic "PlayerState" save blob. Splitting by
+domain means each can be versioned/migrated independently later, rather than one schema change
+forcing a migration of everything.
+
+### Economy
+
+```csharp
+IEconomyService economy = GameBootstrapper.Instance.Services.Get<IEconomyService>();
+
+economy.TryAdd(new CurrencyId("Coins"), 100, reason: "LevelCompletion");
+if (economy.CanAfford(new CurrencyId("Coins"), 500))
+{
+    economy.TrySpend(new CurrencyId("Coins"), 500, reason: "Purchase");
+}
+```
+
+Arbitrary currencies — the framework hard-codes neither "Coins" nor "Gems", only `CurrencyId`.
+`CurrencyDefinition` supplies `MaxBalance`/`MinBalance` (0 = no maximum); every `TryAdd`/`TrySpend`/
+`SetBalance` clamps to that range and widens to `long` internally before clamping, so a large grant
+can never silently overflow `int`. Zero/negative amounts and unregistered currencies are rejected
+(logged, never thrown — an expected gameplay failure is a result, not an exception) and never
+change the balance. `GetRecentTransactions()` returns the last 50 balance changes
+(`EconomyTransaction`: id/currency/delta/balance-after/reason/timestamp) as an in-memory,
+non-persisted ring buffer — for debugging/UI/an analytics adapter, explicitly not a financial
+ledger.
+
+### Inventory
+
+```csharp
+IInventoryService inventory = GameBootstrapper.Instance.Services.Get<IInventoryService>();
+
+InventoryOperationResult result = inventory.TryAdd(new ItemId("HealthPotion"), 150);
+// result.Success == true, result.AppliedAmount == 99, result.Remainder == 51
+// (MaxStack = 99 on this item's ItemDefinition)
+```
+
+Quantity-based (one aggregate count per `ItemId`), not slot/grid-based. `ItemDefinition.MaxStack`
+(0/negative = unlimited) caps the total owned quantity; overflowing it is never a silent item loss
+— `TryAdd` returns exactly how much was applied and exactly how much wasn't
+(`InventoryOperationResult.Remainder`), a deliberate choice over silently dropping the excess or
+rejecting the whole request. `TryRemove` is all-or-nothing (never removes a partial amount) and
+fails with `InsufficientQuantity` rather than removing what's available. `ItemDefinition.Category`
+is a free-form string, not a closed enum — the framework does not hard-code
+Consumable/Equipment/Vehicle/... category names.
+
+### Experience
+
+```csharp
+IExperienceService experience = GameBootstrapper.Instance.Services.Get<IExperienceService>();
+
+AddExperienceResult result = experience.AddExperience(950, reason: "Quest");
+// Level 4, 950 XP granted on a flat-100-per-level curve -> Level 10, 50 XP remaining,
+// with one LevelChangedEvent published per level actually crossed (4->5, 5->6, ..., 9->10).
+```
+
+`IProgressionCurve.GetRequiredExperience(level)` is the only curve contract — `ProgressionCurveDefinition`
+implements it in either `Linear` mode (`BaseExperience + (level-1) * IncrementPerLevel`, with an
+optional `MaxLevel` cap) or `Table` mode (an explicit per-level array; the table's length is
+automatically the effective max level). A curve reporting `0` (or negative) for the current level
+means "no further level exists" — `IsAtMaxLevel` reads exactly that, and a further
+`AddExperience` call at max level is a no-op (`AddExperienceResult.AtMaxLevel`), not silently
+accumulating meaningless excess XP. A large grant applies every level-up it crosses in one
+deterministic pass (integer/long math throughout, no floating point) and publishes one
+`LevelChangedEvent` per level actually crossed — never only the final transition — so a listener
+that reacts to every intermediate level (e.g. a per-level unlock check) never misses one.
+
+### Unlocks
+
+```csharp
+IUnlockService unlocks = GameBootstrapper.Instance.Services.Get<IUnlockService>();
+
+unlocks.RegisterUnlock(veteranCarDefinition, new AllRequirement(
+    new LevelRequirement(experience, minLevel: 10),
+    new AnyRequirement(
+        new CurrencyRequirement(economy, new CurrencyId("Coins"), 500),
+        new PrerequisiteUnlockRequirement(unlocks, new UnlockId("StarterCar")))));
+
+UnlockResult result = unlocks.TryUnlock(new UnlockId("VeteranCar"));
+```
+
+`IUnlockRequirement` (`IsSatisfied()`/`Describe()`) is composed, not a giant conditional —
+`LevelRequirement`/`CurrencyRequirement`/`ItemRequirement` each wrap a direct reference to the
+service they check (constructor-injected, so each is independently unit-testable without a live
+service registry), and `AllRequirement`/`AnyRequirement` combine them (AND/OR; a vacuous
+`AllRequirement` with no children is satisfied, a vacuous `AnyRequirement` is not — the correct
+identity element for each). `UnlockDefinition` itself carries only id/display text; a requirement
+is associated with it via `RegisterUnlock` in code, the same register-in-code pattern
+`ISettingsService.Register` already established, deliberately avoiding a `[SerializeReference]`
+custom-drawer just to author AND/OR trees in the Inspector.
+
+**Prerequisites and cycles.** `PrerequisiteUnlockRequirement` checks `IsUnlocked` (a flag lookup),
+never re-evaluates the target's own requirement — this is what makes a requirement cycle (A needs
+B, B needs A) a safe, detectable *permanent content deadlock* rather than infinite recursion:
+neither ever gets unlocked, but nothing ever recurses to find that out. `UnlockService.ValidateNoCycles()`
+walks every registered requirement tree for prerequisite edges and runs a standard DFS cycle
+detection over them (call it as part of content validation/CI, not at runtime) — it returns the
+ids involved in the first cycle found, logged as an error, so a content mistake like this is caught
+before it ships rather than discovered as "this content can never be unlocked" in QA.
+
+`RegisterUnlock` happens *after* `IUnlockService.Initialize` (a requirement typically needs another
+already-initialized service resolved from the registry) — see
+[Game Flow Integration](#game-flow-integration-2) for exactly where that happens, and note that
+`Load()` therefore cannot validate persisted unlocked-ids against registered content the way
+Economy/Inventory validate against their constructor-injected definitions (see `UnlockService`'s
+remarks in source for the full explanation — an id from removed content just sits unused in the
+unlocked set, which is harmless, not silent corruption).
+
+### Rewards
+
+```csharp
+IRewardService rewards = GameBootstrapper.Instance.Services.Get<IRewardService>();
+
+rewards.RegisterReward(levelCompletionDefinition, new RewardBundle(
+    new CurrencyReward(economy, new CurrencyId("Coins"), 100),
+    new ItemReward(inventory, new ItemId("HealthPotion"), 1),
+    new ExperienceReward(experience, 50)));
+
+RewardClaimResult result = rewards.TryClaim(new RewardId("LevelCompletion"));
+// A second TryClaim on a RewardClaimPolicy.Once reward always returns AlreadyClaimed -
+// idempotency is the framework's guarantee here, not something calling code must re-check.
+```
+
+`IReward` (`CanGrant()`/`Grant()`) mirrors Phase 4's `IGameplayCommand` (`CanExecute`/`Execute`)
+deliberately. `RewardService.TryClaim` validates the *entire* reward — recursing through an
+arbitrary `RewardBundle` nesting via `CanGrant()` — before calling `Grant()` on any part of it, so
+a reward already known to be invalid (an unregistered currency, an unknown item) never partially
+mutates player state. This is validate-then-mutate, not a rollback engine: if a child's `Grant()`
+somehow still fails after its own `CanGrant()` passed (which should not happen in this
+single-threaded, main-thread-only framework), whatever already granted stays granted and the
+failure is logged loudly rather than hidden — the project's stated "at minimum: validate before
+mutating" bar, not a claim of full ACID transactions.
+
+**Idempotency** is a persisted `HashSet<RewardId>` of claimed ids for `RewardClaimPolicy.Once`
+rewards — the same "check the flag, then set it" shape `UnlockService` uses for its unlocked-set.
+`RewardClaimPolicy.Repeatable` tracks no claim state at all (every `TryClaim` grants). Two distinct
+events exist for a reason: `RewardGrantedEvent` fires every time content is actually granted
+(including every time for a repeatable reward); `RewardClaimedEvent` fires only for a `Once` reward,
+the moment its one-time flag is set — "granted" and "claimed" are genuinely different concepts, not
+the same event under two names.
+
+`ProgressionBootstrapper` (`GameFramework.Rewards`) is the composition root — a `GameBootstrapper`
+subclass, sibling to `PlayerSystemsBootstrapper`/`GameplayBootstrapper`/`PerformanceBootstrapper`,
+that registers all five services (`IEconomyService`/`IInventoryService`/`IExperienceService`/
+`IUnlockService`/`IRewardService`) with their constructor-injected static content (`CurrencyDefinition[]`/
+`ItemDefinition[]`/`ProgressionCurveDefinition`, all Inspector-assigned fields). It deliberately does
+**not** register any `UnlockDefinition`/`RewardDefinition` requirement or content — which unlocks/
+rewards exist and what they require is game-specific content, not framework composition, matching
+"the framework defines no concrete currencies/items/unlocks/rewards" throughout this phase.
+
+### Game Flow Integration {#game-flow-integration-2}
+
+A game (or this framework's own Phase 6 sample) registers its actual unlock requirements and
+reward contents *after* `GameBootstrapper.State` reaches `BootstrapState.Ready` — the same
+"wait for Ready, then wire content" coroutine pattern every phase's demo scene already uses, and
+necessary here because a requirement/reward needs `IServiceRegistry.Get<TService>()` on one of
+these five services, which only succeeds once that service is actually initialized:
+
+```csharp
+private IEnumerator Start()
+{
+    while (GameBootstrapper.Instance == null || GameBootstrapper.Instance.State != BootstrapState.Ready)
+    {
+        yield return null;
+    }
+
+    IServiceRegistry services = GameBootstrapper.Instance.Services;
+    var unlocks = services.Get<IUnlockService>();
+    var experience = services.Get<IExperienceService>();
+
+    unlocks.RegisterUnlock(veteranCarDefinition, new LevelRequirement(experience, minLevel: 3));
+    // ... RegisterReward similarly ...
+}
+```
+
+A game wanting Progression alongside Player Systems/Gameplay/Performance combines them in its own
+small subclass, exactly as the framework already documents for combining any two of those — none
+of `GameFramework.Progression`/`.Unlocks`/`.Rewards` references Input/UI/Audio/Feedback/Gameplay/
+Performance types, so it composes freely with all of them.
+
+### Sample
+
+`Assets/GameFramework/Samples/Phase6Demo/` — not added to Build Settings, matching every other
+phase's demo. Five real `.asset` files under `Content/` (`CoinsCurrency`, `HealthPotionItem`,
+`PlayerLevelCurve`, `VeteranCarUnlock`, `FirstQuestReward` — authored as actual ScriptableObject
+assets, not built in code, since these are exactly the kind of content a real game authors via the
+Inspector) plus `Phase6DemoController`, which registers the demo's one unlock (`VeteranCar`, requires
+level 3) and one reward (`FirstQuest`: 100 Coins + 1 HealthPotion + 50 XP) after Ready, then exposes
+key-driven interactions (1 = claim reward, 2 = claim again to observe idempotency, 3 = try unlocking
+before level 3, G = grant XP, U = try unlocking again, R = full status report).
+
 ## Testing
 
 - Everything in Phase 2 that doesn't need Unity's per-frame lifecycle is EditMode-tested,
@@ -1431,6 +1659,38 @@ this scene produced, and this section's remarks throughout on what those numbers
   `GameFramework.Gameplay.Tests.Runtime` (PlayMode, since it needs real GameObjects) rather than a
   new assembly: foreign-object release rejection, statistics (Get/Release/miss/peak/total-created
   counts), dispose-with-active-instances, and `PrewarmStagedRoutine` reaching its exact target count.
+- Phase 6's three EditMode test assemblies (`GameFramework.Progression.Tests`, `.Unlocks.Tests`,
+  `.Rewards.Tests`) each build a minimal, already-initialized `ServiceRegistry` via a small
+  `TestRegistryFactory` — a fake `ITimeService` (only `EconomyService` actually needs one, for
+  transaction timestamps) plus the *real* `EventService` and a *real* `PersistenceService` backed by
+  `InMemoryPersistenceStorage`, so save/load round-trips are tested against the genuine persistence
+  code path, never the developer's real save files. Definition ScriptableObjects (`CurrencyDefinition`,
+  `ItemDefinition`, ...) are built via `ScriptableObject.CreateInstance` and populated through
+  reflection onto their private `[SerializeField]`s in a `TestDefinitions` helper — the same
+  read-only-property trade-off `ObjectiveDefinition` already accepts elsewhere in the framework.
+  `GameFramework.Runtime`'s `AssemblyInfo.cs` grants all three `InternalsVisibleTo` for the
+  `MarkInitialized`-based registry pattern.
+- `EconomyServiceTests`/`InventoryServiceTests`/`ExperienceServiceTests` cover each service's core
+  business rules in isolation (validation, clamping, partial-add remainder, multi-level-up math,
+  save/load, reset). `RequirementCompositionTests` covers `AllRequirement`/`AnyRequirement` against
+  fake requirements (including the vacuous-AND-vs-vacuous-OR distinction). `UnlockServiceTests`
+  covers registration/duplicate-detection/prerequisite chains/`ValidateNoCycles` against a real
+  detected cycle. `RewardTypeTests`/`RewardServiceTests` cover each concrete `IReward` plus claim
+  idempotency (a `Once` reward claimed five times in a row grants exactly once).
+  `IntegrationTests` (in `GameFramework.Rewards.Tests`, since it can see all five services) covers
+  the cross-system flows the project's testing strategy calls for: an XP reward triggering a level-up
+  that satisfies a pending unlock requirement, a full claim→save→reload→replay-claim cycle proving
+  idempotency survives a session boundary, and an invalid bundle member rejecting the entire claim
+  with zero partial state change.
+- **A real bug this testing caught before it shipped:** `UnlockService.Load()`/`RewardService.Load()`
+  originally filtered persisted ids against `_entries` (mirroring Economy/Inventory's validation) —
+  but `RegisterUnlock`/`RegisterReward` necessarily happen *after* `Initialize()`/`Load()` (a
+  requirement/reward typically needs another already-initialized service resolved from the
+  registry), so `_entries` was always empty at load time and every persisted unlock/claim was
+  silently dropped on every session after the first. `SaveThenLoad_RestoresUnlockedState` failed
+  immediately on the first real test run; the fix (load unconditionally, accept that a removed
+  content id just sits unused rather than trying to validate at a point where validation is
+  structurally impossible) is documented on both services.
 
 ## Phase 0 — Core utilities
 
@@ -1486,6 +1746,15 @@ reliable cross-platform API exists for one), or an automatic device-to-quality-p
 (`IMobilePerformanceService.ApplyProfile` is the hook; picking *which* profile is a game decision).
 None of Phases 0–4's public APIs were changed to make room for it — every addition is either new
 (the `GameFramework.Performance` assembly) or purely additive to an existing one (`GameObjectPool`'s
-`Statistics`/hardening, two new asmdef references, both one-way). Planned next:
+`Statistics`/hardening, two new asmdef references, both one-way).
 
-- **Phase 6** — Progression, Rewards, Economy & Inventory.
+Phase 6 deliberately does **not** include: a full IAP SDK integration, cloud save, backend/
+server-authoritative economy, an achievements platform, a quest system, a battle pass/season
+system, a marketplace/trading/player-to-player transfer system, or an analytics SDK — `IReward`/
+the result types (`SpendResult`, `UnlockResult`, `RewardClaimResult`, ...) are the seams an external
+purchase-validation or analytics adapter would hook into later, not something this phase builds
+itself. No concrete currency, item, level curve, unlock, or reward exists for any specific game —
+[Sample](#sample) exists for validation/documentation only and is not part of the reusable
+framework. Planned next:
+
+- **Phase 7** — Achievements, Quests & Content Systems (tentative — not yet scoped).
