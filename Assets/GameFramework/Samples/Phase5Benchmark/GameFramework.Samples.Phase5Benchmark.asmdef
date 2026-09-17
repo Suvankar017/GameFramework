@@ -1,10 +1,11 @@
 {
-    "name": "GameFramework.Gameplay",
-    "rootNamespace": "GameFramework.Gameplay",
+    "name": "GameFramework.Samples.Phase5Benchmark",
+    "rootNamespace": "GameFramework.Samples.Phase5Benchmark",
     "references": [
         "GameFramework.Core",
         "GameFramework.Runtime",
-        "GameFramework.Performance"
+        "GameFramework.Performance",
+        "GameFramework.Gameplay"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -1,8 +1,10 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using GameFramework.Core.Extensions;
 using GameFramework.Core.Validation;
 using GameFramework.Gameplay.Lifecycle;
+using GameFramework.Performance.Profiling;
 using GameFramework.Runtime.Diagnostics;
 using UnityEngine;
 using UnityEngine.Pool;
@@ -42,6 +44,13 @@ namespace GameFramework.Gameplay.Pooling
         private readonly bool _ownsContainer;
         private readonly bool _resetTransformOnRelease;
         private readonly List<IGameplayObjectLifecycle> _lifecycleScratch = new List<IGameplayObjectLifecycle>();
+        private readonly HashSet<GameObject> _activeInstances = new HashSet<GameObject>();
+
+        private int _getCount;
+        private int _releaseCount;
+        private int _missCount;
+        private int _totalCreatedCount;
+        private int _peakActiveCount;
 
         public GameObjectPool(GameObject prefab, GameObjectPoolConfig config = null, Transform container = null)
         {
@@ -82,6 +91,10 @@ namespace GameFramework.Gameplay.Pooling
         public int CountInactive => _pool.CountInactive;
         public int CountAll => _pool.CountAll;
 
+        /// <summary>Development-diagnostic snapshot - see <see cref="PoolStatistics"/>.</summary>
+        public PoolStatistics Statistics => new PoolStatistics(
+            _getCount, _releaseCount, _missCount, _totalCreatedCount, _peakActiveCount, CountActive, CountInactive);
+
         /// <summary>Eagerly creates <paramref name="count"/> instances and immediately returns them
         /// to the pool. Each prewarmed instance goes through Activate/Deactivate exactly once during
         /// this call — <see cref="UnityEngine.Pool.ObjectPool{T}"/> has no lower-level way to seed
@@ -105,6 +118,46 @@ namespace GameFramework.Gameplay.Pooling
             }
         }
 
+        /// <summary>
+        /// Spreads prewarming <paramref name="totalCount"/> instances over multiple frames,
+        /// <paramref name="perFrame"/> at a time, to avoid a single-frame instantiation spike on a
+        /// large prewarm count. The caller drives this via its own <c>StartCoroutine</c> - this pool
+        /// is a plain C# class with no Unity lifecycle of its own to run a coroutine from. Only
+        /// worth using over a plain <see cref="Prewarm"/> call when profiling shows the upfront
+        /// prewarm cost actually causes a visible spike; for a handful of instances, one
+        /// <see cref="Prewarm"/> call is simpler and just as cheap.
+        /// </summary>
+        public IEnumerator PrewarmStagedRoutine(int totalCount, int perFrame)
+        {
+            if (totalCount <= 0 || perFrame <= 0)
+            {
+                yield break;
+            }
+
+            // Get() totalCount new instances spread over multiple frames, then Release() all of
+            // them at the end - calling plain Prewarm() repeatedly would not work here, since once
+            // the free list already holds `perFrame` inactive instances a later Prewarm(perFrame)
+            // just recycles those same instances through Get/Release instead of growing the pool.
+            var buffer = new GameObject[totalCount];
+            int created = 0;
+            while (created < totalCount)
+            {
+                int batch = Mathf.Min(perFrame, totalCount - created);
+                for (int i = 0; i < batch; i++)
+                {
+                    buffer[created + i] = _pool.Get();
+                }
+
+                created += batch;
+                yield return null;
+            }
+
+            for (int i = 0; i < totalCount; i++)
+            {
+                _pool.Release(buffer[i]);
+            }
+        }
+
         /// <summary>Gets an instance at the container's default placement — call the
         /// position/rotation overload to place it explicitly.</summary>
         public GameObject Get() => GetInternal(Vector3.zero, Quaternion.identity, null, applyTransform: false);
@@ -116,54 +169,81 @@ namespace GameFramework.Gameplay.Pooling
 
         private GameObject GetInternal(Vector3 position, Quaternion rotation, Transform parent, bool applyTransform)
         {
-            GameObject instance = _pool.Get();
-            if (instance.IsNullOrDestroyed())
+            using (new ProfileScope(ProfilingCategory.Pooling))
             {
-                Log.Error(LogCategory, $"A pooled instance of '{_prefab.name}' was destroyed outside the pool " +
-                    "(always use Release, never Destroy, on a pooled instance); creating a replacement.");
-                instance = CreateInstance();
-                OnGet(instance);
-            }
-
-            if (applyTransform)
-            {
-                Transform instanceTransform = instance.transform;
-                instanceTransform.SetPositionAndRotation(position, rotation);
-                if (parent != null)
+                _getCount++;
+                GameObject instance = _pool.Get();
+                if (instance.IsNullOrDestroyed())
                 {
-                    instanceTransform.SetParent(parent, worldPositionStays: true);
+                    _missCount++;
+                    Log.Error(LogCategory, $"A pooled instance of '{_prefab.name}' was destroyed outside the pool " +
+                        "(always use Release, never Destroy, on a pooled instance); creating a replacement.");
+                    instance = CreateInstance();
+                    OnGet(instance);
                 }
-            }
 
-            return instance;
+                if (applyTransform)
+                {
+                    Transform instanceTransform = instance.transform;
+                    instanceTransform.SetPositionAndRotation(position, rotation);
+                    if (parent != null)
+                    {
+                        instanceTransform.SetParent(parent, worldPositionStays: true);
+                    }
+                }
+
+                return instance;
+            }
         }
 
         /// <summary>Returns <paramref name="instance"/> to the pool. Logs (rather than throwing) on
-        /// a null/already-destroyed instance, or a duplicate release of the same instance.</summary>
+        /// a null/already-destroyed instance, a foreign object this pool never handed out, or a
+        /// duplicate release of the same instance - none of these corrupt the pool's internal
+        /// state.</summary>
         public void Release(GameObject instance)
         {
-            if (instance.IsNullOrDestroyed())
+            using (new ProfileScope(ProfilingCategory.Pooling))
             {
-                Log.Warning(LogCategory, "Release called with a null or already-destroyed instance; ignored.");
-                return;
-            }
+                if (instance.IsNullOrDestroyed())
+                {
+                    Log.Warning(LogCategory, "Release called with a null or already-destroyed instance; ignored.");
+                    return;
+                }
 
-            try
-            {
-                _pool.Release(instance);
-            }
-            catch (InvalidOperationException ex)
-            {
-                Log.Error(LogCategory, $"Duplicate Release detected for '{instance.name}': {ex.Message}");
+                if (!_activeInstances.Contains(instance))
+                {
+                    Log.Error(LogCategory, $"Release called with '{instance.name}', which this pool did not hand out " +
+                        "(a foreign object, or already released) - ignored to avoid corrupting the pool.");
+                    return;
+                }
+
+                try
+                {
+                    _pool.Release(instance);
+                    _releaseCount++;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    Log.Error(LogCategory, $"Duplicate Release detected for '{instance.name}': {ex.Message}");
+                }
             }
         }
 
         /// <summary>Destroys every currently inactive instance and this pool's own container (if it
         /// created one). Does not affect instances currently out via <see cref="Get()"/> — release
-        /// those first if they should also be destroyed.</summary>
+        /// those first if they should also be destroyed. Logs a warning (still disposes) if any
+        /// instances are active, since those references become dangling once their container-owning
+        /// pool is gone.</summary>
         public void Dispose()
         {
+            if (_activeInstances.Count > 0)
+            {
+                Log.Warning(LogCategory, $"Disposing pool for '{_prefab.name}' while {_activeInstances.Count} " +
+                    "instance(s) are still active - those references are now dangling.");
+            }
+
             _pool.Dispose();
+            _activeInstances.Clear();
 
             if (_ownsContainer && _container.IsAlive())
             {
@@ -173,6 +253,7 @@ namespace GameFramework.Gameplay.Pooling
 
         private GameObject CreateInstance()
         {
+            _totalCreatedCount++;
             GameObject instance = Object.Instantiate(_prefab, _container);
             instance.SetActive(false);
 
@@ -203,6 +284,11 @@ namespace GameFramework.Gameplay.Pooling
             }
 
             instance.SetActive(true);
+            _activeInstances.Add(instance);
+            if (_activeInstances.Count > _peakActiveCount)
+            {
+                _peakActiveCount = _activeInstances.Count;
+            }
 
             instance.GetComponents(_lifecycleScratch);
             for (int i = 0; i < _lifecycleScratch.Count; i++)
@@ -220,6 +306,7 @@ namespace GameFramework.Gameplay.Pooling
 
         private void OnRelease(GameObject instance)
         {
+            _activeInstances.Remove(instance);
             instance.GetComponents(_lifecycleScratch);
             for (int i = 0; i < _lifecycleScratch.Count; i++)
             {

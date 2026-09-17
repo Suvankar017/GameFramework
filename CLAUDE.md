@@ -1801,3 +1801,103 @@ Protect existing functionality
 The goal is not to produce the most code.
 
 The goal is to produce the **smallest maintainable production-quality change that correctly solves the problem.**
+
+---
+
+# 77. Phase 5 Performance Infrastructure
+
+Phase 5 added `GameFramework.Performance` — a cross-cutting layer (profiling, a centralized tick
+system, pooling hardening, resource loading, mobile utilities, memory diagnostics, performance
+budgets) that sits alongside `GameFramework.PlayerSystems`/`GameFramework.Gameplay`, not inside
+either. Full API examples and design rationale live in
+`Assets/GameFramework/Documentation/Framework.md`'s "Performance Infrastructure" section — this
+section is the stable rule summary; that one is the living reference.
+
+## Performance Architecture
+
+* `GameFramework.Performance` references only `GameFramework.Core`/`GameFramework.Runtime` — never
+  Input/UI/Audio/Feedback/Gameplay. It must stay usable by any game regardless of which other
+  systems it also uses.
+* `GameFramework.Gameplay` takes a one-way reference *on* `GameFramework.Performance` (pooling's
+  profiling markers/statistics). Never the other direction — that would be a cycle.
+* Registered services (`ITickService`, `IPerformanceMonitorService`, `IApplicationLifecycleService`,
+  `IMobilePerformanceService`) are added by `PerformanceBootstrapper`, a `GameBootstrapper`
+  subclass — the same registration-extension mechanism every other phase's bootstrapper subclass
+  uses. Do not register them from `GameBootstrapper` itself.
+* `MemoryDiagnostics` and `DeviceInfo` are static utilities, not services — they have no lifecycle,
+  just point-in-time engine queries. Do not wrap them in a service for the sake of symmetry.
+* Every frame-rate/budget number this layer works with is a **configured target**, checked against a
+  **measured** value — never claim it as a guarantee. Real performance depends on the device,
+  resolution, scene content, and thermal state.
+
+## Tick Rules
+
+* Use plain `MonoBehaviour.Update()` for anything simple, low-count, or already working. Reach for
+  `ITickService` when a large/variable number of objects would otherwise each carry their own
+  `Update()`, or when centralized enable/disable and ordering actually matter.
+* `ITickable` ticks every frame regardless of gameplay pause (its `deltaTime` is simply 0 while
+  paused, exactly like Unity's own `Update` + `Time.deltaTime`). Use
+  `GameFramework.Gameplay.IGameplayTickable` instead when a paused gameplay session should stop the
+  object being called at all.
+* Fixed-timestep work goes through `IFixedTickable`/`RegisterFixed` — never simulate physics from
+  the variable `ITickable` phase.
+* `ILateTickable`/`RegisterLate` is for presentation work that must run after every `Tick` has moved
+  things (camera follow, etc.) — do not move gameplay logic there merely for symmetry with
+  Fixed/Late.
+* Always pair `Register` with `Unregister` (`OnEnable`/`OnDisable` is the usual place) — an object
+  that stops needing per-frame work but stays registered is a silent, avoidable cost.
+* Do not call `ITickService`'s `Tick`/`TickFixed`/`TickLate` from game code — that is
+  `GameBootstrapper`/`TickServiceDriver`'s job. (The Phase 5 benchmark scene is a deliberate,
+  documented exception for measurement purposes only.)
+* Do not add a second general-purpose tick/update system. If `ITickService` doesn't fit a case,
+  that's a discussion, not a reason to build a competing one.
+
+## Pooling Rules
+
+* Pool objects that are repeatedly created/destroyed during gameplay (projectiles, effects, frequent
+  UI elements). Do not pool everything — pooling adds lifecycle complexity that only pays for itself
+  under real churn.
+* Never `Object.Destroy`/`DestroyImmediate` a pooled instance directly — always `Release` it. A
+  pool's `Release` now rejects a foreign object (one it never handed out via `Get`) rather than
+  silently admitting it, so a direct-destroy-then-somehow-release bug surfaces as a logged error,
+  not silent corruption.
+* `GameObjectPool.Statistics` is a read-only development diagnostic — do not use it to drive
+  gameplay logic (e.g. don't branch on `PeakActiveCount`); it exists for the performance
+  overlay/development report, not as a public gameplay API.
+* Use `PrewarmStagedRoutine` only when profiling shows a large `Prewarm` call actually causes a
+  visible frame spike. For a handful of instances, plain `Prewarm` is simpler and just as cheap.
+* Ownership: a pool's container Transform owns every instance it created. Disposing a pool while
+  instances are still checked out leaves those references dangling (logged as a warning) — release
+  everything you got from a pool before disposing it.
+
+## Resource Rules
+
+* The project does not use Addressables or AssetBundles. Do not introduce Addressables for a new
+  feature unless there is a concrete project requirement — extend `IAssetProvider` instead, or use
+  direct references, exactly as Phases 0–4 already do.
+* Every `IAssetProvider.Load`/`LoadAsync` call returns a handle that must be released exactly once.
+  A `Load` with no matching `Release` keeps that asset referenced indefinitely — this is on the
+  caller, the provider does not guess when you're done with something.
+* `LoadAsync`'s `owner` parameter exists specifically so a callback never fires into a destroyed
+  object — pass it whenever the callback would touch a `MonoBehaviour`/scene object.
+* Releasing the last handle for a key does not force-unload a `GameObject`/`Component` asset (Unity
+  doesn't support that) — those become eligible for the next `Resources.UnloadUnusedAssets()`. Don't
+  expect an immediate memory drop from `Release` alone for those types.
+
+## Performance Rules
+
+* **Profile first, optimize second.** Do not change code because it "looks slow" — use
+  `ProfileScope`/the Unity Profiler/`IPerformanceMonitorService` to establish there's a real cost
+  before changing anything for performance reasons.
+* Hot paths (tick loops, pooling `Get`/`Release`, physics queries, input polling, spawning): no
+  LINQ, no per-call allocation, no uncached `GetComponent`, no reflection, no `Find*`. This was
+  already true of Phases 0–4 as of the Phase 5 audit — keep it true.
+* `ProfileScope` is safe to leave in a hot path — it is a zero-allocation `readonly struct` gated by
+  a single branch on `PerformanceSettings.Mode`, and costs nothing when `Disabled` (the default
+  outside the Editor/development builds).
+* Never call `GC.Collect()` during gameplay. If a truly exceptional scenario seems to need it,
+  that's a design discussion first, not a quick fix.
+* Report only measurements you actually obtained. Distinguish **Measured** (a real `Stopwatch`/
+  Profiler/`IPerformanceMonitorService` reading), **Estimated** (e.g. `GC.GetTotalMemory`, which is
+  an estimate by definition), and **Configured** (a target frame rate/budget) — never present one as
+  another.

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using GameFramework.Core.Extensions;
+using GameFramework.Performance.Profiling;
 using GameFramework.Runtime.Bootstrap;
 using GameFramework.Runtime.Diagnostics;
 using GameFramework.Runtime.Time;
@@ -77,6 +78,8 @@ namespace GameFramework.Gameplay.Spawning
 
         public SpawnResult TrySpawn(SpawnRequest request)
         {
+            using var _ = new ProfileScope(ProfilingCategory.Spawning);
+
             if (!isActiveAndEnabled)
             {
                 return Fail(SpawnFailureReason.SpawnerDestroyed);

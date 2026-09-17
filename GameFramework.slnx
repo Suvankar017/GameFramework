@@ -2,6 +2,7 @@
   <Project Path="GameFramework.UI.csproj" />
   <Project Path="GameFramework.Runtime.csproj" />
   <Project Path="GameFramework.Gameplay.csproj" />
+  <Project Path="GameFramework.Performance.csproj" />
   <Project Path="GameFramework.Runtime.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase4Demo.csproj" />
   <Project Path="GameFramework.Input.csproj" />
@@ -10,6 +11,7 @@
   <Project Path="GameFramework.Audio.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.csproj" />
   <Project Path="GameFramework.Audio.Tests.csproj" />
+  <Project Path="GameFramework.Performance.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase2Demo.csproj" />
   <Project Path="GameFramework.Core.csproj" />
   <Project Path="GameFramework.Feedback.Tests.csproj" />
@@ -21,6 +23,7 @@
   <Project Path="GameFramework.Samples.Phase3Demo.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Runtime.Tests.Runtime.csproj" />
+  <Project Path="GameFramework.Samples.Phase5Benchmark.csproj" />
   <Project Path="GameFramework.Editor.csproj" />
   <Project Path="GameFramework.Samples.Phase1Demo.csproj" />
   <Project Path="GameFramework.Core.Tests.Runtime.csproj" />

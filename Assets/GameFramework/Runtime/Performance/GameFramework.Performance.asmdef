@@ -1,10 +1,9 @@
 {
-    "name": "GameFramework.Gameplay",
-    "rootNamespace": "GameFramework.Gameplay",
+    "name": "GameFramework.Performance",
+    "rootNamespace": "GameFramework.Performance",
     "references": [
         "GameFramework.Core",
-        "GameFramework.Runtime",
-        "GameFramework.Performance"
+        "GameFramework.Runtime"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

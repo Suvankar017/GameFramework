@@ -19,3 +19,8 @@ using System.Runtime.CompilerServices;
 // ServiceRegistry (e.g. with a fake ITimeService) for testing GameplayService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.Gameplay.Tests")]
 [assembly: InternalsVisibleTo("GameFramework.Gameplay.Tests.Runtime")]
+
+// Phase 5 performance test assembly reuses the same pattern to build a minimal,
+// already-initialized ServiceRegistry (e.g. with a fake ITimeService) for testing TickService and
+// PerformanceMonitorService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.Performance.Tests")]

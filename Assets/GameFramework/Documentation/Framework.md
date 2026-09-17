@@ -5,15 +5,19 @@ tooling and target platforms.
 
 ## Status
 
-**Phase 4 — Gameplay Infrastructure.** Phase 0 laid the structural foundation, Phase 1 built
-Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the infrastructure layer (Time,
-Timers, Events, Persistence, Settings), and Phase 3 added five reusable player-facing systems
-(Input, Localization, Audio, UI Foundation, Feedback/Haptics). Phase 4 adds generic gameplay
-infrastructure on top: a gameplay loop, entity/component utilities, object lifecycle, spawning,
-pooling, commands, interaction/targeting, and objectives/checkpoints — see
-[Gameplay Infrastructure](#gameplay-infrastructure). No player character, enemy AI, weapons,
-inventory, progression, economy, or other game-specific content exists yet — see
-[Roadmap](#roadmap).
+**Phase 5 — Performance, Optimization & Runtime Management.** Phase 0 laid the structural
+foundation, Phase 1 built Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the
+infrastructure layer (Time, Timers, Events, Persistence, Settings), Phase 3 added five reusable
+player-facing systems (Input, Localization, Audio, UI Foundation, Feedback/Haptics), and Phase 4
+added generic gameplay infrastructure (a gameplay loop, entity/component utilities, object
+lifecycle, spawning, pooling, commands, interaction/targeting, and objectives/checkpoints — see
+[Gameplay Infrastructure](#gameplay-infrastructure)). Phase 5 adds a cross-cutting performance
+layer on top of all of it — profiling/frame diagnostics, a centralized tick system, pooling
+hardening, a lightweight resource-loading abstraction, mobile performance utilities, memory
+diagnostics, and configurable performance budgets — see
+[Performance Infrastructure](#performance-infrastructure). It measures and hardens what already
+exists; it does not add game-specific content. No player character, enemy AI, weapons, inventory,
+progression, economy, or other game-specific content exists yet — see [Roadmap](#roadmap).
 
 ## Target environment
 
@@ -96,6 +100,19 @@ subclass (see [Player Systems Bootstrap](#player-systems-bootstrap)) — `GameBo
 unchanged, since a lower layer must never reference the higher-level assemblies those services live
 in.
 
+`GameFramework.Performance` (Phase 5) references only `GameFramework.Core`/`GameFramework.Runtime` —
+the same shape as `GameFramework.Gameplay` — specifically so it stays usable by any game regardless
+of which of Player Systems/Gameplay Infrastructure it also uses; nothing under
+`GameFramework.Performance.*` references Input/UI/Audio/Feedback/Gameplay types. Its four services
+(`ITickService`, `IPerformanceMonitorService`, `IApplicationLifecycleService`,
+`IMobilePerformanceService`) are registered by `PerformanceBootstrapper`, a third
+`GameBootstrapper` subclass sibling to `PlayerSystemsBootstrapper`/`GameplayBootstrapper` — see
+[Performance Infrastructure](#performance-infrastructure). The one exception to "Performance stays
+below everything else": `GameFramework.Gameplay` itself takes a one-way reference *on*
+`GameFramework.Performance` (not the other way around) so `GameObjectPool`/`Spawner` can use
+`ProfileScope` and `GameObjectPool` can expose `PoolStatistics` — a lower layer providing
+diagnostics that a higher layer opts into, not a dependency cycle.
+
 ## Folder structure
 
 ```text
@@ -148,6 +165,23 @@ Assets/GameFramework/
 │                                  IGameplayLifecycle.cs, IGameplayTickable.cs,
 │                                  IGameplayFixedTickable.cs, IGameplayLateTickable.cs,
 │                                  GameplayLoopState.cs, GameplayBootstrapper.cs
+│   └── Performance/               GameFramework.Performance.asmdef (Phase 5)
+│       ├── AssemblyInfo.cs        InternalsVisibleTo for GameFramework.Performance.Tests
+│       ├── Profiling/             ProfilingCategory.cs, ProfilingMode.cs, PerformanceSettings.cs,
+│       │                          ProfileScope.cs, PerformanceBudget.cs, FrameTimeStats.cs,
+│       │                          IPerformanceMonitorService.cs, PerformanceMonitorService.cs,
+│       │                          PerformanceOverlay.cs
+│       ├── Ticking/               ITickable.cs, IFixedTickable.cs, ILateTickable.cs, TickGroup.cs,
+│       │                          TickRegistry.cs, ITickService.cs, TickService.cs,
+│       │                          TickServiceDriver.cs
+│       ├── Memory/                ManagedMemorySample.cs, MemoryDiagnostics.cs
+│       ├── Resources/             IAssetHandle.cs, AssetHandle.cs, IAssetProvider.cs,
+│       │                          ResourcesAssetProvider.cs
+│       ├── Mobile/                DeviceInfo.cs, PerformanceProfile.cs, PerformanceProfileConfig.cs,
+│       │                          IMobilePerformanceService.cs, MobilePerformanceService.cs,
+│       │                          ApplicationLifecycleEvents.cs, ApplicationLifecycleDriver.cs,
+│       │                          IApplicationLifecycleService.cs, ApplicationLifecycleService.cs
+│       └── (root)                 PerformanceBootstrapper.cs
 ├── Editor/
 │   ├── GameFramework.Editor.asmdef (Phase 3, extended Phase 4)
 │   ├── Localization/             LocalizationTableValidator.cs
@@ -162,8 +196,10 @@ Assets/GameFramework/
 │   │   ├── Localization/                GameFramework.Localization.Tests.asmdef (EditMode)
 │   │   ├── Audio/                       GameFramework.Audio.Tests.asmdef (EditMode)
 │   │   ├── Feedback/                    GameFramework.Feedback.Tests.asmdef (EditMode)
-│   │   └── Gameplay/                    GameFramework.Gameplay.Tests.asmdef (EditMode, Phase 4)
-│   │       ├── Entities/ , Lifecycle/ , Commands/ , Objectives/
+│   │   ├── Gameplay/                    GameFramework.Gameplay.Tests.asmdef (EditMode, Phase 4)
+│   │   │   ├── Entities/ , Lifecycle/ , Commands/ , Objectives/
+│   │   └── Performance/                 GameFramework.Performance.Tests.asmdef (EditMode, Phase 5)
+│   │       ├── Ticking/ , Profiling/
 │   └── Runtime/                         GameFramework.Core.Tests.Runtime.asmdef (PlayMode)
 │       ├── Extensions/
 │       ├── Framework/                   GameFramework.Runtime.Tests.Runtime.asmdef (PlayMode)
@@ -172,7 +208,7 @@ Assets/GameFramework/
 │       ├── UI/                          GameFramework.UI.Tests.Runtime.asmdef (PlayMode)
 │       ├── PlayerSystems/               GameFramework.PlayerSystems.Tests.Runtime.asmdef (PlayMode)
 │       └── Gameplay/                    GameFramework.Gameplay.Tests.Runtime.asmdef (PlayMode, Phase 4)
-│           ├── Pooling/ , Spawning/ , Interaction/
+│           ├── Pooling/ , Spawning/ , Interaction/    (Pooling/ also covers Phase 5 hardening)
 └── Documentation/
     └── Framework.md                     (this file)
 ```
@@ -193,10 +229,11 @@ Assets/GameFramework/
 | `GameFramework.Feedback` | `Runtime/Feedback` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Audio` | Haptics abstraction, presets coordinating haptics + audio. |
 | `GameFramework.UI` | `Runtime/UI` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Audio`, `GameFramework.Feedback`, `Unity.TextMeshPro` | Layered canvases (Screen Space - Overlay or Camera, via `UICanvasConfig`), screen stack, popups/modals, localized UI components. |
 | `GameFramework.PlayerSystems` | `Runtime/PlayerSystems` | all of the above + `GameFramework.Runtime` | Composition root: `PlayerSystemsBootstrapper`. |
-| `GameFramework.Gameplay` | `Runtime/Gameplay` | `GameFramework.Core`, `GameFramework.Runtime` (sibling of `PlayerSystems` — no Input/UI/Audio/Feedback reference) | Gameplay loop, entity/component utilities, object lifecycle, spawning, pooling, commands, interaction/targeting, objectives/checkpoints. Composition root: `GameplayBootstrapper`. |
+| `GameFramework.Gameplay` | `Runtime/Gameplay` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance` (sibling of `PlayerSystems` — no Input/UI/Audio/Feedback reference) | Gameplay loop, entity/component utilities, object lifecycle, spawning, pooling, commands, interaction/targeting, objectives/checkpoints. Composition root: `GameplayBootstrapper`. |
+| `GameFramework.Performance` | `Runtime/Performance` | `GameFramework.Core`, `GameFramework.Runtime` (sibling of `PlayerSystems`/`Gameplay` — no Input/UI/Audio/Feedback/Gameplay reference) | Profiling markers/frame diagnostics, centralized tick system, memory diagnostics, resource-loading abstraction, mobile performance utilities, performance budgets. Composition root: `PerformanceBootstrapper`. |
 | `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay` | Editor-only. Localization table validation and Gameplay config validation menu items. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
-| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics). |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
 Phase 3 is the opposite case: UI's dependency on Localization/Audio/Feedback (and Feedback's on
@@ -214,6 +251,17 @@ exist as an EditMode assembly: `UIScreen`/`UIPopup` test doubles are MonoBehavio
 returned null from `AddComponent`, not because the framework had a bug, but because the *test*
 assembly was the wrong kind. All `UIScreen`/`UIPopup`-touching tests live in
 `GameFramework.UI.Tests.Runtime` (PlayMode) instead.
+
+Phase 5 gets one new assembly, `GameFramework.Performance`, for the same reason Phase 4 got
+`GameFramework.Gameplay`: it needs to be a compile-time-enforced sibling of `PlayerSystems`/
+`Gameplay` (usable by either without depending on either), which an assembly boundary makes a
+compile error to violate. Its six internal areas (Profiling/Ticking/Memory/Resources/Mobile, plus
+the root `PerformanceBootstrapper`) share no dependency boundary worth enforcing against each
+other, so they stay namespaces within one assembly rather than becoming six more `.asmdef`s — the
+same reasoning Phase 2's five modules and Phase 4's eight subsystems already established. The one
+new *reference* Phase 5 adds to an existing assembly is `GameFramework.Gameplay` → `GameFramework.Performance`
+(pooling hardening uses `ProfileScope` and exposes `PoolStatistics`) — additive, one-way, and
+already reflected in the table above.
 
 ## Namespace conventions
 
@@ -246,6 +294,13 @@ Block-style namespaces only, never file-scoped. Current namespaces:
 - `GameFramework.Gameplay.Objectives` — `IObjective`, `ObjectiveBase`, `ObjectiveState`, `ObjectiveActivatedEvent`/`ObjectiveCompletedEvent`/`ObjectiveFailedEvent`, `ObjectiveDefinition`, `Checkpoint`, `CheckpointData`.
 - `GameFramework.Editor.Localization` — `LocalizationTableValidator` (Editor-only).
 - `GameFramework.Editor.Gameplay` — `GameplayConfigValidator` (Editor-only).
+- `GameFramework.Performance` — `PerformanceBootstrapper`.
+- `GameFramework.Performance.Profiling` — `ProfilingCategory`, `ProfilingMode`, `PerformanceSettings`, `ProfileScope`, `PerformanceBudget`, `FrameTimeStats`, `IPerformanceMonitorService`, `PerformanceMonitorService`, `PerformanceOverlay`.
+- `GameFramework.Performance.Ticking` — `ITickable`, `IFixedTickable`, `ILateTickable`, `TickGroup`, `ITickService`, `TickService`.
+- `GameFramework.Performance.Memory` — `ManagedMemorySample`, `MemoryDiagnostics`.
+- `GameFramework.Performance.Resources` — `IAssetHandle<T>`, `IAssetProvider`, `ResourcesAssetProvider`.
+- `GameFramework.Performance.Mobile` — `DeviceInfo`, `PerformanceProfile`, `PerformanceProfileConfig`, `IMobilePerformanceService`, `MobilePerformanceService`, `IApplicationLifecycleService`, `ApplicationLifecycleService`, `ApplicationPausedEvent`/`ApplicationResumedEvent`/`ApplicationFocusChangedEvent`/`ApplicationQuittingEvent`.
+- `GameFramework.Gameplay.Pooling` also gains `PoolStatistics` in Phase 5 (see [Pooling](#pooling) — extended, not moved).
 
 A naming note: `GameFramework.Runtime.Time` and `GameFramework.Runtime.Timers` share a word with
 `UnityEngine.Time`/nothing, respectively, but that hasn't caused the ambiguity you might expect —
@@ -929,6 +984,24 @@ instance that was destroyed externally (e.g. a scene-scoped pool's scene unloadi
 being disposed first) and transparently creates a replacement rather than handing back a broken
 reference — both are covered by `GameObjectPoolTests`, not just asserted in comments.
 
+**Phase 5 hardening.** `Release` now also rejects a foreign object — one this specific pool never
+handed out via `Get` (tracked in a `HashSet<GameObject>` populated/cleared in the same `actionOnGet`/
+`actionOnRelease` callbacks `ObjectPool<T>` already calls, so the check is O(1) and adds no new hot
+path) — logging instead of silently admitting it into the free list, which would otherwise corrupt
+the pool. `Dispose` now warns (but still disposes) if any instances are still active, since those
+references become dangling once the container-owning pool is gone. `Get`/`Release` are wrapped in a
+`ProfileScope(ProfilingCategory.Pooling)` — a no-op branch when `PerformanceSettings.Mode` is
+`Disabled`, so this costs nothing in a release build. `GameObjectPool.Statistics` exposes a
+`PoolStatistics` snapshot (Get/Release counts, miss count, total-created count, peak/current
+active/inactive) for development diagnostics — read-only, no effect on the pool. `PrewarmStagedRoutine(totalCount, perFrame)`
+spreads prewarming across multiple frames (the caller drives it via its own `StartCoroutine`) for
+the rare case a large prewarm count causes a visible spike; plain `Prewarm` remains the default for
+everything else. **Known limitation, stated plainly:** the active-instance tracking above only
+catches an instance destroyed externally *while inactive* (the case `Get` already handled before
+Phase 5); an instance destroyed externally *while still checked out* leaves a stale entry in the
+tracking set until the pool is disposed — a general fix would need scene-unload hooks this pass
+didn't add, since profiling gave no evidence it's a real problem worth the added complexity.
+
 ### Commands
 
 `IGameplayCommand` (`CanExecute`/`Execute`) decouples a discrete gameplay action's request from its
@@ -1017,6 +1090,290 @@ objective/interaction failure is a typed result/log, never a `GameManager`-style
 Gameplay type references Input/UI/Audio/Feedback, so "UI/Audio/Feedback integration remains
 decoupled" holds by construction, not by convention alone.
 
+## Performance Infrastructure
+
+Phase 5. A cross-cutting layer that measures and hardens what Phases 0–4 already built — it adds no
+game-specific content, and per [Architecture](#architecture) it stays a sibling of
+`GameFramework.PlayerSystems`/`GameFramework.Gameplay`, not a dependency of either. Registered
+services: `ITickService`, `IPerformanceMonitorService`, `IApplicationLifecycleService`,
+`IMobilePerformanceService` — see [Game Flow Integration](#game-flow-integration-1) for how a game
+registers them. `MemoryDiagnostics` and `DeviceInfo` are static, dependency-free utilities, not
+services, since they have no lifecycle of their own — just point-in-time engine queries.
+
+**Reference budgets, not guarantees.** Every frame-rate/budget number this layer works with
+(`IPerformanceMonitorService.TargetFrameRate`, `FrameBudgetMilliseconds`, a registered
+`PerformanceBudget`) is a *configured target* a game opts into, checked against *measured* values.
+None of it is a guarantee: actual performance depends on the device, resolution, scene content, GPU/
+CPU headroom, thermal state, and Unity's own configuration, none of which this framework controls.
+
+### Profiling & Diagnostics
+
+`ProfileScope` (`GameFramework.Performance.Profiling`) wraps Unity's own `Unity.Profiling.ProfilerMarker`
+Begin/End — this is not a replacement for the Unity Profiler, just a consistently-categorized way to
+mark framework boundaries that show up in it:
+
+```csharp
+using (new ProfileScope(ProfilingCategory.Pooling))
+{
+    // ... work you want visible as "GameFramework.Pooling" in the Unity Profiler ...
+}
+```
+
+`ProfilingCategory` is a fixed, small enum (Framework, Gameplay, Input, UI, Audio, Spawning,
+Pooling, Physics, Rendering, Loading, Persistence) — add a category only for a real, recurring
+boundary, never per-method. Every `ProfileScope` is gated by the static `PerformanceSettings.Mode`
+(`Disabled`/`Development`/`Detailed`, defaulting to `Development` in the Editor/development builds
+and `Disabled` otherwise via `#if`): when `Disabled`, construction/disposal is a single branch with
+no marker call, so leaving `ProfileScope` in a hot path (pooling's `Get`/`Release`, the tick loop)
+costs nothing in a release build.
+
+`IPerformanceMonitorService` (`PerformanceMonitorService`) samples real, unscaled frame time once
+per frame via `IUpdatableService.Tick()` — the same mechanism every other per-frame service uses —
+into a fixed-size (120-sample) rolling buffer, with no per-frame allocation:
+
+```csharp
+IPerformanceMonitorService monitor = GameBootstrapper.Instance.Services.Get<IPerformanceMonitorService>();
+monitor.TargetFrameRate = 30; // FrameBudgetMilliseconds becomes 33.33ms
+monitor.RegisterBudget("GameplayTick", 8f);
+
+FrameTimeStats stats = monitor.GetFrameStats(); // Last/Average/Worst frame ms, spike count
+
+// Elsewhere, after doing the timed work yourself (a Stopwatch, a ProfilerMarker readback, etc.):
+monitor.ReportSample("GameplayTick", elapsedMilliseconds); // rate-limited warning if over budget
+```
+
+**What this can and cannot tell you.** Frame time here is wall-clock CPU frame duration
+(`ITimeService.UnscaledDeltaTime`) between two `Tick()` calls — a real, measured value. It cannot
+isolate GPU time, cannot attribute a spike to a specific system, and is not a substitute for the
+Unity Profiler or a platform's native tools. A frame whose time exceeds `SpikeThresholdMilliseconds`
+(defaults to `FrameBudgetMilliseconds`) increments a spike counter and logs a warning — rate-limited
+to once per `SpikeLogIntervalSeconds` (default 2s), never every frame. `ReportSample` follows the
+same rate-limiting per budget name.
+
+**Overlay.** `PerformanceOverlay` (add it to any `GameObject` yourself — no Bootstrapper adds it
+automatically) is an optional, development-only `OnGUI` HUD showing FPS/frame time/spike
+count/managed memory, toggled with F9 by default. It is compiled out of non-development builds
+entirely (`#if UNITY_EDITOR || DEVELOPMENT_BUILD`) rather than merely hidden. `OnGUI` was chosen
+deliberately over `GameFramework.UI`'s canvas/screen machinery — a debug HUD has nothing to do with
+player-facing UI, and pulling in Localization/Audio/Feedback for one label would be exactly the kind
+of unnecessary dependency [Architecture](#architecture) avoids.
+
+### Tick System
+
+Phase 4 intentionally avoided a general update architecture (`IGameplayService`'s tick interfaces
+are scoped to one gameplay session). Phase 5 adds `ITickService` — a lower-level, always-on
+primitive usable by *any* system, gameplay session or not:
+
+```csharp
+public class Enemy : MonoBehaviour, ITickable
+{
+    private void OnEnable() => tickService.Register(this, priority: 0);
+    private void OnDisable() => tickService.Unregister(this);
+    public void Tick(float deltaTime) { /* instead of Update() */ }
+}
+```
+
+**How this differs from `IGameplayTickable`.** `ITickable.Tick` fires every frame with
+`ITimeService.ScaledDeltaTime` — which is itself 0 while `ITimeService.IsPaused`, the same
+relationship Unity's own `Update` + `Time.deltaTime` has to `Time.timeScale`. It does **not** stop
+being called while paused (unlike `IGameplayTickable`, which `GameplayService` stops calling
+entirely). Use `IGameplayTickable` when a paused gameplay session should stop an object ticking at
+all; use `ITickable` for framework-level or session-independent per-frame work (a debug overlay, an
+always-running background system).
+
+**Three phases**, matching `IGameplayFixedTickable`/`IGameplayLateTickable`'s split for the same
+reason: `RegisterFixed`/`IFixedTickable.FixedTick` (Unity's `FixedUpdate`, integrates correctly with
+physics timing — never simulate physics from the variable phase) and `RegisterLate`/`ILateTickable.LateTick`
+(Unity's `LateUpdate` — camera/presentation work that must run after every `Tick` has moved things
+for the frame). The variable phase reuses `IUpdatableService.Tick()` via `GameBootstrapper.Update()`
+exactly like every other framework service; Fixed/Late go through `TickService`'s own tiny
+`DontDestroyOnLoad` driver (`TickServiceDriver`), the same pattern `GameplayLoopDriver` and
+`AudioApplicationLifecycleHook` already established, since a plain C# service cannot receive those
+Unity callbacks directly.
+
+**Priority** is optional (`Register(tickable, priority: n)`, default 0, lower ticks first) and
+sorted on insert — registration is far less frequent than ticking, so sorting every frame was never
+on the table. `TickGroup` (Gameplay/Physics/AI/Animation/Presentation) is recorded alongside a
+registration for diagnostics only; it does not change execution order.
+
+**Registration safety.** Register/Unregister are idempotent no-ops on a duplicate call, matching
+`IEventService.Subscribe`'s semantics. Each tick phase snapshots its live registration list into a
+reused, geometrically-grown buffer before invoking anything — the same technique `IEventService.Publish`
+uses via `ArrayPool<Delegate>` — so Register/Unregister called from *inside* a tick callback
+(including a tickable unregistering itself, or registering a new one) never corrupts the in-progress
+loop: a mid-tick change is picked up on the *next* tick, never the one already snapshotted. Each
+invocation is wrapped in try/catch and logged through the established logger on failure (category
+`"Ticking"`) — one throwing tickable never stops the rest of that tick from running.
+
+### Allocation & GC Policy
+
+Phase 5 audited Phases 0–4 for the patterns listed in the project's engineering rules (`FindObjectOfType`,
+`GameObject.Find`, `SendMessage`, LINQ, repeated `GetComponent`, per-frame `new List`/`new Dictionary`/
+`new[]`, uncached delegates) across every `Runtime/` assembly. **Finding, stated honestly: none of
+those patterns exist in a hot path anywhere in Phases 0–4.** `FindObjectOfType`/`GameObject.Find`/
+`SendMessage`/LINQ do not appear in `Runtime/` at all; every `GetComponent` call already caches its
+result (`LocalizedText`/`LocalizedImage`/`LocalizedTMPText`/`UIButtonFeedback`); the two
+`GetComponentInParent`/`GetComponentInChildren` calls are `ComponentLookup`'s own documented,
+opt-in, call-site-visible utility, not a hidden hot-path cost; `Dictionary.Values` iteration
+(`InputService.Tick`) does not box or allocate (a concretely-typed `ValueCollection` enumerator is a
+struct). This is why Phase 5 adds hardening and new capability rather than a wave of hot-path
+rewrites — there was no measured problem to fix, only new infrastructure to build carefully so it
+doesn't introduce one. This audit is a snapshot, not a standing guarantee for code added after it.
+
+**The policy going forward**, for this layer and anything built on it:
+
+- **Hot paths** (tick loops, pooling `Get`/`Release`, physics queries, input polling, spawning) —
+  no LINQ, no per-call allocation, no uncached `GetComponent`, no reflection, no `Find*`. `ProfileScope`
+  is safe here specifically because it is a `readonly struct` gated by a single branch.
+- **Initialization** (service `Initialize`, pool construction, `DeviceInfo`'s one-time capture) — a
+  more expensive one-time operation is fine if it prevents repeated runtime work; nothing here is
+  optimized at the expense of clarity.
+- **Editor-only code** — clarity over runtime micro-optimization; none of it ships.
+- **Rare/explicit operations** (`ResourcesAssetProvider.LoadAsync`'s one closure per call,
+  `TickRegistry<T>.Register`'s O(n) `Contains` check) — acceptable; these are not per-frame paths,
+  and the alternative (a second index structure) would add real complexity for a cost nothing has
+  measured as a problem.
+- **`GC.Collect()`** is never called anywhere in this framework, and nothing in Phase 5 introduces a
+  case for it — forcing a full collection during gameplay trades a predictable small cost for an
+  unpredictable large one, which is the opposite of what a frame-budget-conscious framework wants.
+- **Logging** — `ILoggingService.Log`/`Log.*` check `IsEnabled` before formatting (Phase 1); nothing
+  in Phase 5 eagerly builds a diagnostic string when its log level/category is disabled.
+
+See [Pooling](#pooling)'s "Phase 5 hardening" note for the one place this phase touched an existing
+hot path directly, and [Performance Test Scene](#performance-test-scene) for the measurements that
+justify these choices.
+
+### Memory Management
+
+`MemoryDiagnostics.Sample()` (static, no service, no lifecycle) returns a `ManagedMemorySample`:
+`System.GC.GetTotalMemory(false)` always (the managed heap's best estimate, not total process
+memory), plus `UnityEngine.Profiling.Profiler`'s allocated/reserved figures **only** in the Editor or
+a development build (`ManagedMemorySample.HasUnityMemoryData` is `false` otherwise, rather than
+presenting an unreliable 0 as if it were real) — this is not a replacement for the Unity Memory
+Profiler, just "roughly how much managed memory is in use right now."
+
+**Ownership audit, stated plainly** (see the project's Memory Rules for the questions this answers):
+static state in this framework is limited to `PerformanceSettings.Mode` (a config switch, not a
+retained reference) and the per-type marker array `ProfileScope` builds once; neither retains a
+scene, GameObject, or asset. `IEventService` subscriptions are the framework's one standing
+leak risk across every phase — a subscriber that never unsubscribes stays referenced by the
+publisher for as long as both are alive — Phase 5 adds no new event-subscription pattern beyond
+`Subscribe`'s existing `IEventSubscription.Dispose()` cleanup. `GameObjectPool`'s new active-instance
+tracking (see [Pooling](#pooling)) holds `GameObject` references only between `Get` and `Release`/
+eviction — never after. `IAssetProvider`'s handles are the one place Phase 5 introduces a new
+"forgot to release" risk (see [Resource Management](#resource-management)) — deliberately explicit
+(a handle, not an implicit cache) so that risk is visible at the call site rather than hidden.
+
+### Resource Management
+
+The project does not use Addressables or AssetBundles anywhere (checked before building this) — so
+per the project's Resource Rules, Phase 5 does not introduce Addressables speculatively. `IAssetProvider`/
+`ResourcesAssetProvider` (`GameFramework.Performance.Resources`) is a thin, optional abstraction over
+`UnityEngine.Resources`, reference-counted per key:
+
+```csharp
+IAssetProvider assets = new ResourcesAssetProvider(); // constructed directly - not a registered service
+IAssetHandle<AudioClip> handle = assets.Load<AudioClip>("Sfx/Explosion");
+if (handle.IsLoaded) { /* use handle.Asset */ }
+handle.Release(); // decrements the ref count; the cache entry drops once every handle is released
+
+assets.LoadAsync<GameObject>("Enemies/Grunt", h => { /* ... */ }, owner: this);
+// owner is optional - if it's destroyed before loading finishes, the callback never fires.
+```
+
+Not a registered service, deliberately: an asset provider's lifetime is naturally tied to whatever
+owns it (a level, a game system), not the application. A second `Load` for an already-cached key
+returns a handle to the same asset and increments the count instead of loading again. Dropping a
+cache entry does **not** force-unload a `GameObject`/`Component` asset — `Resources.UnloadAsset`
+does not support those types — they remain eligible for the next `Resources.UnloadUnusedAssets()`,
+exactly like any other unreferenced Resources asset. If a project adopts Addressables later, it can
+implement `IAssetProvider` without call sites changing.
+
+### Mobile Performance Utilities
+
+`IMobilePerformanceService` (`MobilePerformanceService`) wraps the handful of settings a mobile game
+commonly needs — never every Unity rendering setting:
+
+```csharp
+IMobilePerformanceService perf = GameBootstrapper.Instance.Services.Get<IMobilePerformanceService>();
+perf.ConfigureProfile(PerformanceProfile.Low, new PerformanceProfileConfig(qualityLevel: 0, resolutionScale: 0.75f, targetFrameRate: 30));
+perf.ApplyProfile(PerformanceProfile.Low); // sets quality level, resolution (via Screen.SetResolution), and Application.targetFrameRate together
+```
+
+Default profile configs (Low/Medium/High) are derived from however many Quality levels the *project*
+actually has configured (`QualitySettings.names.Length`) — never a hard-coded index count — and are
+meant to be overridden via `ConfigureProfile`, not treated as correct for any specific game. Nothing
+picks a profile automatically from `DeviceInfo`; that mapping is a game decision.
+
+`DeviceInfo` (static, captured once on first access) exposes `Platform`/`ProcessorCount`/
+`SystemMemoryMegabytes`/`GraphicsMemoryMegabytes`/`GraphicsDeviceName`/`ScreenWidth`/`ScreenHeight`
+via `SystemInfo`/`Screen` — **hints for a coarse decision, not guarantees**: OS-reported memory can be
+inaccurate or capped, and nothing here accounts for other apps competing for the same device or for
+thermal throttling. This framework does not attempt universal thermal management (there is no
+reliable cross-platform API for it) — if a project has platform-specific thermal signals, it reacts
+to them itself; `IMobilePerformanceService.ApplyProfile` is the hook a lower quality profile would go
+through.
+
+**Application lifecycle**, centralized once rather than duplicated per subsystem:
+`IApplicationLifecycleService` (`ApplicationLifecycleService`) relays `OnApplicationPause`/
+`OnApplicationFocus`/`OnApplicationQuit` (via its own tiny driver, the same
+`GameplayLoopDriver`/`AudioApplicationLifecycleHook` pattern) and republishes them as
+`ApplicationPausedEvent`/`ApplicationResumedEvent`/`ApplicationFocusChangedEvent`/`ApplicationQuittingEvent`
+through the Phase 2 `IEventService` — subscribe to those instead of writing another
+`OnApplicationPause` handler. On the OS backgrounding the app, it calls `ITimeService.Pause()` (and
+`Resume()` on foregrounding) — reusing Phase 2's existing reference-counted pause rather than a
+second pause mechanism, which is also exactly what stops `ITickable`s (and everything else gated on
+`IsPaused`) from doing unnecessary work while backgrounded, satisfying the project's battery-usage
+rule without every gameplay system needing its own handler. Because `Pause`/`Resume` are
+reference-counted, this composes correctly with a game's own pause menu.
+
+### Performance Budgets & Validation
+
+Budgets are plain, named, game-registered values (`IPerformanceMonitorService.RegisterBudget`) —
+never a fixed universal set every project must fill in. `ReportSample` checks a measured value
+against a registered budget and logs a rate-limited warning when it's exceeded; an unregistered name
+is a silent no-op (a game that never calls `RegisterBudget` pays nothing extra). See
+[Performance Test Scene](#performance-test-scene) for the benchmarks/stress tests this phase actually
+ran, and the framework's top-level performance baseline in this repository's Phase 5 completion
+report for the real numbers those runs produced.
+
+### Game Flow Integration {#game-flow-integration-1}
+
+No new GameManager, matching every previous phase. `PerformanceBootstrapper` (`GameFramework.Performance`)
+is a `GameBootstrapper` subclass — sibling to `PlayerSystemsBootstrapper`/`GameplayBootstrapper`, not
+descending from either — that registers `ITickService`/`IPerformanceMonitorService`/
+`IApplicationLifecycleService`/`IMobilePerformanceService` the same way every other phase's
+bootstrapper subclass adds its own services. A game wanting Performance alongside Player Systems
+and/or Gameplay Infrastructure combines them in its own small subclass:
+
+```csharp
+public class MyGameBootstrapper : PlayerSystemsBootstrapper
+{
+    protected override void RegisterServices(IServiceRegistry registry)
+    {
+        base.RegisterServices(registry); // Phase 1/2/3
+        registry.Register<IGameplayService>(new GameplayService());
+        registry.Register<IPoolService>(new PoolService());
+        registry.Register<ITickService>(new TickService());
+        registry.Register<IPerformanceMonitorService>(new PerformanceMonitorService());
+        registry.Register<IApplicationLifecycleService>(new ApplicationLifecycleService());
+        registry.Register<IMobilePerformanceService>(new MobilePerformanceService());
+    }
+}
+```
+
+### Performance Test Scene
+
+`Assets/GameFramework/Samples/Phase5Benchmark/` — an isolated benchmark/stress-test scene, not added
+to Build Settings, matching every other phase's demo. `Phase5BenchmarkController` builds everything
+in code (no authored assets): number keys register 100/500/1000 synthetic `ITickable`s, `T` runs a
+100-call `Stopwatch`-timed tick benchmark against whatever's registered, `P` runs a 1000-cycle pooled
+`Get`/`Release` benchmark, `M` samples managed memory, `R` logs a combined development report (frame
+stats, tickable counts, pool statistics, memory). Every number it prints comes from a real
+`Stopwatch`/`IPerformanceMonitorService`/`GameObjectPool.Statistics` reading of the actual production
+code path - see this repository's Phase 5 completion report for the specific measurements one run of
+this scene produced, and this section's remarks throughout on what those numbers do and don't prove.
+
 ## Testing
 
 - Everything in Phase 2 that doesn't need Unity's per-frame lifecycle is EditMode-tested,
@@ -1063,6 +1420,17 @@ decoupled" holds by construction, not by convention alone.
   swapping in a `PooledSpawnProvider`) both instantiate/destroy real GameObjects;
   `TargetingUtilityTests` exercises real `Physics`/`Physics2D` overlap queries against real
   Colliders, which an EditMode fake could not do meaningfully.
+- Phase 5's `GameFramework.Performance.Tests` (EditMode) covers `TickServiceTests` (registration/
+  duplicate-registration/unregistration/priority ordering/register-and-unregister-during-tick/
+  exception isolation/fixed and late phases, against a fake `ITimeService`) and
+  `PerformanceMonitorServiceTests` (frame sampling, worst-frame tracking, reset, budget reporting) —
+  `GameFramework.Performance` grew its own `AssemblyInfo.cs` (`InternalsVisibleTo` for
+  `GameFramework.Performance.Tests`) to expose `TickService`'s internal `TickFixed`/`TickLate` to
+  tests, the same pattern `GameFramework.Runtime`'s `AssemblyInfo.cs` already established.
+- `PoolHardeningTests` was added alongside the existing `GameObjectPoolTests` in
+  `GameFramework.Gameplay.Tests.Runtime` (PlayMode, since it needs real GameObjects) rather than a
+  new assembly: foreign-object release rejection, statistics (Get/Release/miss/peak/total-created
+  counts), dispose-with-active-instances, and `PrewarmStagedRoutine` reaching its exact target count.
 
 ## Phase 0 — Core utilities
 
@@ -1105,8 +1473,19 @@ Phase 4 deliberately does **not** include: Player Character, Enemy AI, Weapons, 
 Currency, Economy, Quests, Level Progression, Rewards, Tutorial, Ads, Analytics, IAP, Remote Config,
 Leaderboards, Multiplayer, or any game-specific vehicle/controller — these consume Phase 4's
 infrastructure (commands, interaction, objectives, spawning, pooling) rather than living inside it.
-A general-purpose Tick Scheduler/Job System/ECS update graph was also deliberately not built now —
-`IGameplayService`'s three tick interfaces are kept forward-compatible with one (see
-[Gameplay Loop](#gameplay-loop)), not a substitute for it. Planned next:
+A general-purpose Tick Scheduler/Job System/ECS update graph was also deliberately not built in
+Phase 4 — Phase 5's `ITickService` (see [Tick System](#tick-system)) is that general-purpose primitive,
+kept forward-compatible with `IGameplayService`'s three session-scoped tick interfaces rather than
+replacing them; the two coexist by design (see [Tick System](#tick-system)'s remarks on when to use
+which).
 
-- **Phase 5** — Performance, Tick System, Optimization, Memory & Resource Management.
+Phase 5 deliberately does **not** include: a custom ECS (Entity World/Archetypes/Component
+Storage/Systems World/Scheduler), a custom memory allocator (arena/slab/custom GC), a custom
+resource pipeline replacing Addressables/AssetBundles, a universal thermal-management system (no
+reliable cross-platform API exists for one), or an automatic device-to-quality-profile heuristic
+(`IMobilePerformanceService.ApplyProfile` is the hook; picking *which* profile is a game decision).
+None of Phases 0–4's public APIs were changed to make room for it — every addition is either new
+(the `GameFramework.Performance` assembly) or purely additive to an existing one (`GameObjectPool`'s
+`Statistics`/hardening, two new asmdef references, both one-way). Planned next:
+
+- **Phase 6** — Progression, Rewards, Economy & Inventory.
