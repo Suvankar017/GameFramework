@@ -1,0 +1,16 @@
+{
+    "name": "GameFramework.Samples.Phase0Demo",
+    "rootNamespace": "GameFramework.Samples.Phase0Demo",
+    "references": [
+        "GameFramework.Core"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
