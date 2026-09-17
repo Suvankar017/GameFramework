@@ -1,25 +1,30 @@
 {
-    "name": "GameFramework.Editor",
-    "rootNamespace": "GameFramework.Editor",
+    "name": "GameFramework.Quests.Tests",
+    "rootNamespace": "GameFramework.Quests.Tests",
     "references": [
         "GameFramework.Core",
         "GameFramework.Runtime",
-        "GameFramework.Localization",
-        "GameFramework.Gameplay",
         "GameFramework.Progression",
         "GameFramework.Unlocks",
         "GameFramework.Rewards",
-        "GameFramework.Quests"
+        "GameFramework.Gameplay",
+        "GameFramework.Quests",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
     ],
     "includePlatforms": [
         "Editor"
     ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
-    "overrideReferences": false,
-    "precompiledReferences": [],
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
     "autoReferenced": true,
-    "defineConstraints": [],
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
     "versionDefines": [],
     "noEngineReferences": false
 }

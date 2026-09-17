@@ -32,3 +32,9 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("GameFramework.Progression.Tests")]
 [assembly: InternalsVisibleTo("GameFramework.Unlocks.Tests")]
 [assembly: InternalsVisibleTo("GameFramework.Rewards.Tests")]
+
+// Phase 7 quest/achievement/milestone test assembly reuses the same pattern to build a minimal,
+// already-initialized ServiceRegistry (a real EventService/PersistenceService-over-
+// InMemoryPersistenceStorage plus a fake ITimeService) for testing Statistics/Quest/Achievement/
+// Milestone services in isolation.
+[assembly: InternalsVisibleTo("GameFramework.Quests.Tests")]

@@ -1,19 +1,15 @@
 {
-    "name": "GameFramework.Editor",
-    "rootNamespace": "GameFramework.Editor",
+    "name": "GameFramework.Quests",
+    "rootNamespace": "GameFramework.Quests",
     "references": [
         "GameFramework.Core",
         "GameFramework.Runtime",
-        "GameFramework.Localization",
-        "GameFramework.Gameplay",
         "GameFramework.Progression",
         "GameFramework.Unlocks",
         "GameFramework.Rewards",
-        "GameFramework.Quests"
+        "GameFramework.Gameplay"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

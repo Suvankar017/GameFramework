@@ -1,19 +1,16 @@
 {
-    "name": "GameFramework.Editor",
-    "rootNamespace": "GameFramework.Editor",
+    "name": "GameFramework.Samples.Phase7Demo",
+    "rootNamespace": "GameFramework.Samples.Phase7Demo",
     "references": [
         "GameFramework.Core",
         "GameFramework.Runtime",
-        "GameFramework.Localization",
-        "GameFramework.Gameplay",
         "GameFramework.Progression",
         "GameFramework.Unlocks",
         "GameFramework.Rewards",
+        "GameFramework.Gameplay",
         "GameFramework.Quests"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

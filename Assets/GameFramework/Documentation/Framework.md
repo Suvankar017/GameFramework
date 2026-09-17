@@ -5,23 +5,28 @@ tooling and target platforms.
 
 ## Status
 
-**Phase 6 — Progression, Rewards, Economy & Inventory.** Phase 0 laid the structural foundation,
+**Phase 7 — Objectives, Quests, Achievements & Milestones.** Phase 0 laid the structural foundation,
 Phase 1 built Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the
 infrastructure layer (Time, Timers, Events, Persistence, Settings), Phase 3 added five reusable
 player-facing systems (Input, Localization, Audio, UI Foundation, Feedback/Haptics), Phase 4 added
 generic gameplay infrastructure (a gameplay loop, entity/component utilities, object lifecycle,
 spawning, pooling, commands, interaction/targeting, and objectives/checkpoints — see
-[Gameplay Infrastructure](#gameplay-infrastructure)), and Phase 5 added a cross-cutting performance
+[Gameplay Infrastructure](#gameplay-infrastructure)), Phase 5 added a cross-cutting performance
 layer (profiling, a centralized tick system, pooling hardening, resource loading, mobile
 utilities, memory diagnostics, performance budgets — see
-[Performance Infrastructure](#performance-infrastructure)). Phase 6 adds the framework's first
+[Performance Infrastructure](#performance-infrastructure)), and Phase 6 added the framework's first
 player-progression content systems — Economy (multi-currency balances), Inventory (item
 ownership/quantities), Experience (levels/XP), Unlocks (composable requirement-gated content), and
 Rewards (idempotent, transaction-safe grant orchestration across all four) — see
 [Progression, Economy, Inventory, Unlocks & Rewards](#progression-economy-inventory-unlocks--rewards).
-The framework still defines no concrete currencies, items, levels, or rewards for any specific
-game — no player character, enemy AI, weapons, quests, achievements, economy backend, or IAP exists
-yet — see [Roadmap](#roadmap).
+Phase 7 adds a reusable gameplay-state/objective layer on top of that: generic Statistics tracking,
+a composable Condition system, condition-backed Objectives (extending Phase 4's objective state
+machine), Quests, Achievements, and threshold Milestones, all claiming rewards through Phase 6's
+existing idempotent `IRewardService` — see
+[Objectives, Quests, Achievements & Milestones](#objectives-quests-achievements--milestones).
+The framework still defines no concrete currencies, items, levels, rewards, quests, or achievements
+for any specific game — no player character, enemy AI, weapons, economy backend, live ops, or IAP
+exists yet — see [Roadmap](#roadmap).
 
 ## Target environment
 
@@ -235,8 +240,12 @@ Assets/GameFramework/
 | `GameFramework.PlayerSystems` | `Runtime/PlayerSystems` | all of the above + `GameFramework.Runtime` | Composition root: `PlayerSystemsBootstrapper`. |
 | `GameFramework.Gameplay` | `Runtime/Gameplay` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance` (sibling of `PlayerSystems` — no Input/UI/Audio/Feedback reference) | Gameplay loop, entity/component utilities, object lifecycle, spawning, pooling, commands, interaction/targeting, objectives/checkpoints. Composition root: `GameplayBootstrapper`. |
 | `GameFramework.Performance` | `Runtime/Performance` | `GameFramework.Core`, `GameFramework.Runtime` (sibling of `PlayerSystems`/`Gameplay` — no Input/UI/Audio/Feedback/Gameplay reference) | Profiling markers/frame diagnostics, centralized tick system, memory diagnostics, resource-loading abstraction, mobile performance utilities, performance budgets. Composition root: `PerformanceBootstrapper`. |
-| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay` | Editor-only. Localization table validation and Gameplay config validation menu items. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Progression` | `Runtime/Progression` | `GameFramework.Core`, `GameFramework.Runtime` | Economy, Inventory, Experience (Phase 6) and Statistics (Phase 7) — mutually independent leaves, one assembly. |
+| `GameFramework.Unlocks` | `Runtime/Unlocks` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression` | Composable requirement-gated unlock tracking. |
+| `GameFramework.Rewards` | `Runtime/Rewards` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression`, `GameFramework.Unlocks` | Idempotent, transaction-safe reward grant orchestration. Composition root: `ProgressionBootstrapper`. |
+| `GameFramework.Quests` | `Runtime/Quests` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Gameplay` | Conditions, condition-backed Objectives, Quests, Achievements, Milestones (Phase 7). Composition root: `QuestsBootstrapper`. |
+| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests` | Editor-only. Localization table, Gameplay config, and Quest content validation menu items. |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
 | `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
@@ -266,6 +275,18 @@ same reasoning Phase 2's five modules and Phase 4's eight subsystems already est
 new *reference* Phase 5 adds to an existing assembly is `GameFramework.Gameplay` → `GameFramework.Performance`
 (pooling hardening uses `ProfileScope` and exposes `PoolStatistics`) — additive, one-way, and
 already reflected in the table above.
+
+Phase 6 gets three new assemblies (`GameFramework.Progression`, `.Unlocks`, `.Rewards`) matching the
+real one-way relationships between them (see
+[Progression, Economy, Inventory, Unlocks & Rewards](#progression-economy-inventory-unlocks--rewards)).
+Phase 7 gets exactly one more, `GameFramework.Quests`, rather than splitting Conditions/Objectives/
+Quests/Achievements/Milestones into five — they share no dependency boundary worth enforcing against
+each other (the same reasoning behind Phase 2's five modules and Phase 5's five internal areas
+staying namespaces in one assembly), and all of them need the same reference set (Progression,
+Unlocks, Rewards, Gameplay) regardless. Statistics is the one Phase 7 exception: it became a new
+*namespace inside* `GameFramework.Progression` rather than its own assembly, since it needs no
+reference `GameFramework.Progression` doesn't already have and is a natural sibling of
+Economy/Inventory/Experience.
 
 ## Namespace conventions
 
@@ -1602,6 +1623,223 @@ level 3) and one reward (`FirstQuest`: 100 Coins + 1 HealthPotion + 50 XP) after
 key-driven interactions (1 = claim reward, 2 = claim again to observe idempotency, 3 = try unlocking
 before level 3, G = grant XP, U = try unlocking again, R = full status report).
 
+## Objectives, Quests, Achievements & Milestones
+
+Phase 7. One new assembly on top of Phase 4/6, plus one new namespace inside the existing
+`GameFramework.Progression` assembly:
+
+```text
+GameFramework.Progression.Statistics   (new namespace, existing assembly — Economy/Inventory/
+                                         Experience's sibling, not a new assembly, since it needs
+                                         no dependency the existing assembly doesn't already have)
+        ↓
+GameFramework.Quests                   (new assembly: Conditions, Objectives, Quests,
+                                         Achievements, Milestones — references Progression,
+                                         Unlocks, Rewards, and Gameplay for IObjective/ObjectiveBase)
+```
+
+`GameFramework.Quests` is the one place in the framework that legitimately references both
+`GameFramework.Gameplay` (for `IObjective`/`ObjectiveBase`) and the Progression/Unlocks/Rewards
+chain in the same assembly — nothing downstream of it needs to, so this doesn't create a cycle;
+`GameFramework.Editor` already had a one-way path to `Gameplay` and now also references
+Progression/Unlocks/Rewards/Quests for content validation.
+
+**Conceptual pipeline** (see CLAUDE.md's Phase 7 brief): Statistics → Conditions → Objectives →
+Quests/Achievements/Milestones → Rewards/Unlocks → persisted state. Not every layer depends
+directly on every other — Milestones, for instance, skip the code-composed condition step entirely
+(see below).
+
+**Extends Phase 4's objective system rather than duplicating it.** `GameFramework.Gameplay.Objectives`
+already had a bare `IObjective`/`ObjectiveBase` state machine (Inactive → Active → Completed/Failed
+→ Inactive) with no notion of a condition or progress — Phase 7's `ConditionObjective : ObjectiveBase`
+is the one concrete objective the framework ships: it wraps an `ICondition`, adds `IProgressObjective`
+(`CurrentValue`/`RequiredValue`/`ProgressNormalized`), and completes itself when `Evaluate()` is
+called while `Active` and the condition is satisfied. `Evaluate()` is never called from an `Update`
+loop — only in response to a relevant event (see Event-Driven Evaluation below).
+
+### Statistics
+
+```csharp
+IStatisticsService statistics = GameBootstrapper.Instance.Services.Get<IStatisticsService>();
+
+statistics.Increment(new StatisticId("RacesCompleted"), 1, reason: "RaceFinished");
+int races = statistics.Get(new StatisticId("RacesCompleted"));
+```
+
+Mirrors `EconomyService` exactly: constructor-injected `StatisticDefinition[]`, the same explicit
+`Save()`/`Load()` + dirty-flag-on-`Shutdown()` policy, the same widen-to-`long`-before-clamping
+overflow protection. Integer is the primary, fully-featured type (`Get`/`Set`/`Increment`/`Decrement`/
+`TryGet`) per CLAUDE.md's own guidance that most progression tracking should prefer it; Float and
+Boolean get their own focused `Get`/`Set` only — no general-purpose type system. `IsMonotonic`
+statistics reject `Decrement` and any `Set` to a lower value (logged, not thrown); `ResetToDefaults`
+bypasses that, same as every reset-support method elsewhere in the framework. `Persistent = false`
+statistics (session-only counters) are never written to the save file and always start each session
+at their default. `StatisticChangedEvent` (Integer/Boolean, previous/new/delta) and
+`StatisticFloatChangedEvent` mirror `CurrencyChangedEvent`'s shape.
+
+### Conditions
+
+```csharp
+var condition = new AllCondition(
+    new StatisticCondition(statistics, new StatisticId("RacesCompleted"), 5),
+    new StatisticCondition(statistics, new StatisticId("CoinsCollected"), 100));
+
+bool satisfied = condition.IsSatisfied();
+```
+
+`ICondition` (`IsSatisfied()`/`Describe()`) deliberately mirrors `IUnlockRequirement`'s shape — same
+composable-tree approach, same constructor-injected-service pattern for independent unit testing —
+but is a separate interface, not a reuse of `IUnlockRequirement`, because this domain also needs
+progress reporting (`IProgressCondition`: `CurrentValue`/`RequiredValue`), which gating unlockable
+content has no use for. `AllCondition`/`AnyCondition` are the exact AND/OR identity-element
+behavior `AllRequirement`/`AnyRequirement` already established (vacuous AND satisfied, vacuous OR
+not); `NotCondition` is new. Concrete conditions: `StatisticCondition` (the primary building block —
+five `ComparisonOperator`s), `StatisticFlagCondition` (Boolean statistics), `LevelCondition`/
+`CurrencyCondition`/`InventoryCondition` (mirror `LevelRequirement`/`CurrencyRequirement`/
+`ItemRequirement`, with progress added), and `UnlockCondition` (gate on `IUnlockService.IsUnlocked`).
+A game adds its own conditions (`CompleteRaceCondition`, `DefeatBossCondition`, ...) by implementing
+`ICondition` from outside this assembly — no framework change required.
+
+### Event-Driven Evaluation
+
+Never polled. `ConditionStatisticIndex.CollectStatistics` walks a condition tree once at
+registration time, collecting every `StatisticId` it depends on and reporting whether the whole
+tree is *purely* statistic-driven. Quest/Achievement services build a `Dictionary<StatisticId,
+List<...>>` from this: a `StatisticChangedEvent` only re-evaluates the quests/achievements actually
+indexed against that exact statistic. Anything with a non-statistic dependency — `LevelCondition`,
+`CurrencyCondition`, `InventoryCondition`, `UnlockCondition`, or a game-specific custom `ICondition`
+the indexer doesn't recognize — falls into a small fallback list re-evaluated on the corresponding
+broader event (`LevelChangedEvent`/`CurrencyChangedEvent`/`ItemChangedEvent`/`UnlockChangedEvent`).
+This is the "simple indexing strategy" CLAUDE.md's Phase 7 brief asks for rather than a full
+dependency graph — for the dominant case (statistic-driven content, which is every example the brief
+itself gives) it's true dirty evaluation; for everything else it degrades to "scan the smaller
+still-active/still-pending set on a rarer event," which the brief explicitly allows at normal mobile
+content scale.
+
+### Quests
+
+```csharp
+IQuestService quests = GameBootstrapper.Instance.Services.Get<IQuestService>();
+
+quests.RegisterQuest(firstRaceDefinition, availability: null, objectives: new[]
+{
+    new QuestObjectiveEntry(completeRaceObjectiveDefinition,
+        new StatisticCondition(statistics, new StatisticId("RacesCompleted"), 1))
+});
+
+quests.Start(new QuestId("FirstRace"));
+// ... later, once RacesCompleted >= 1, the quest auto-completes on that statistic's change event ...
+QuestClaimResult result = quests.TryClaimReward(new QuestId("FirstRace"));
+```
+
+`QuestDefinition` carries only id/display text/`QuestCompletionRule` (All/Any/Count)/
+`QuestRepeatPolicy` (OneTime/Repeatable/LimitedRepeats)/`RewardId` — objectives and the optional
+availability condition are composed in code and passed to `RegisterQuest`, the same
+register-in-code pattern `UnlockDefinition`/`RewardDefinition` already established (avoiding a
+`[SerializeReference]` custom-drawer for condition trees). Each objective entry reuses Phase 4's
+`ObjectiveDefinition` for id/display text rather than introducing a second "objective text" asset.
+
+**`QuestStatus` (Locked/Available/Active/Completed/Claimed) is mostly derived, not persisted.** Only
+"has this quest ever been started" and "has it completed" are genuine persisted bits;
+Locked-vs-Available is derived live from the availability condition, and Claimed is derived from
+`IRewardService.HasClaimed` — never tracked a second time. A quest with no `RewardId` simply stays
+`Completed` forever (there's nothing to claim, so it's never reported `Claimed`). Like
+Unlock/Reward, `RegisterQuest` happens *after* `IQuestService.Initialize` (its conditions typically
+need another already-initialized service), so `Load()` stages persisted per-quest status into a
+pending-restore map that each `RegisterQuest` call consumes for its own id.
+
+**Repeat policy** governs `TryReset`: rejected for `OneTime`, rejected past `MaxRepeats` for
+`LimitedRepeats`, otherwise the quest returns to startable and its objectives reset
+(`ObjectiveBase.Reset()`). `ForceReset` bypasses policy entirely — development/testing only, same
+spirit as every other `ResetToDefaults` in the framework.
+
+### Achievements
+
+```csharp
+IAchievementService achievements = GameBootstrapper.Instance.Services.Get<IAchievementService>();
+
+achievements.RegisterAchievement(experiencedDriverDefinition,
+    new StatisticCondition(statistics, new StatisticId("RacesCompleted"), 10));
+```
+
+Simpler than quests: no availability gate, no repeat policy, exactly one condition. An achievement's
+`ConditionObjective` activates the moment it's registered — there is no "not started" state, matching
+the brief's framing of achievements as long-running accomplishments tracked from the start.
+`AchievementDefinition.AutoClaimReward` controls whether `TryClaimReward` fires automatically the
+instant the achievement completes, or waits for an explicit call (e.g. after showing a completion
+popup) — both paths go through the same `IRewardService.TryClaim`, so idempotency is identical
+either way.
+
+### Milestones
+
+```csharp
+IMilestoneService milestones = GameBootstrapper.Instance.Services.Get<IMilestoneService>();
+
+milestones.RegisterMilestone(raceMasterDefinition); // "RacesCompleted >= 100", from the asset alone
+```
+
+The one place in Phase 7 that needs no code-composed condition: a milestone is always exactly
+"statistic reaches threshold" (every example in the design brief uses this shape), so
+`MilestoneDefinition` carries `StatisticId` + `Threshold` directly and `MilestoneService` builds its
+own internal `StatisticCondition` from its own `IStatisticsService` reference — the one Phase 7
+service that resolves a Progression-layer dependency via the registry rather than direct
+construction, since milestone content is pure data with nothing else for a composition root to
+inject.
+
+### Reward & Unlock Integration
+
+Quests/Achievements/Milestones never track their own "claimed" flag — claiming always resolves to
+exactly one `IRewardService.TryClaim` call, and `IsClaimed`/`GetStatus` always ask
+`IRewardService.HasClaimed` rather than duplicating that bit. This is deliberate: CLAUDE.md's Phase 7
+brief calls out "avoid storing redundant state — redundant state creates synchronization problems,"
+and Phase 6's `RewardService` already owns exactly this idempotency guarantee. The same content can
+also drive `IUnlockService.ForceUnlock` from a `UnlockReward` inside a quest/achievement's granted
+`RewardBundle` — no `AchievementUnlockManager`/`QuestUnlockManager` was introduced; Phase 6's reward
+content types are the integration point.
+
+### Persistence
+
+Each of the four new services persists itself independently, under its own key, through the
+existing `IPersistenceService` — no new save system, no shared "PlayerState" blob:
+
+| Service | Save key | What's persisted |
+|---|---|---|
+| `StatisticsService` | `GameFramework.Progression.Statistics` | Value per **persistent** statistic (Integer/Float/Boolean columns) |
+| `QuestService` | `GameFramework.Quests` | Id/status(Active or Completed only)/repeat-count, one row per quest ever started |
+| `AchievementService` | `GameFramework.Achievements` | Id, one row per **completed** achievement |
+| `MilestoneService` | `GameFramework.Milestones` | Id, one row per **reached** milestone |
+
+All four use `[Serializable] internal` DTOs with parallel `List<T>` fields (the same
+`JsonUtility`-can't-serialize-a-`Dictionary` workaround `EconomySaveData` uses) and the identical
+explicit `Save()`/`Load()` + dirty-flag-on-`Shutdown()` policy as every other Phase 6/7 service —
+nothing here writes to disk on every statistic increment.
+
+### Game Flow Integration
+
+`QuestsBootstrapper` (`GameFramework.Quests`) extends `ProgressionBootstrapper` — a genuine
+inheritance chain, not a flat sibling composition like `PerformanceBootstrapper`/
+`GameplayBootstrapper`/`PlayerSystemsBootstrapper`, because `GameFramework.Quests` already has a
+real compile-time dependency on `GameFramework.Rewards` (quest/achievement/milestone claiming goes
+through `IRewardService`). It registers `IStatisticsService`/`IQuestService`/`IAchievementService`/
+`IMilestoneService` on top of `ProgressionBootstrapper`'s five, with only static content
+(`StatisticDefinition[]`) — exactly like `ProgressionBootstrapper` itself, it does **not** register
+any `QuestDefinition`/`AchievementDefinition`/`MilestoneDefinition` content, since that's
+game-specific and needs services already initialized (the same "wait for Ready, then wire content"
+coroutine pattern every phase's demo scene uses).
+
+### Sample
+
+`Assets/GameFramework/Samples/Phase7Demo/` — not added to Build Settings, matching every other
+phase's demo. Content assets under `Content/` (`RacesCompletedStatistic`, `CoinsCurrency`,
+`PlayerLevelCurve`, `CompleteRaceObjective`, `FirstRaceQuest`, `ExperiencedDriverAchievement`,
+`RaceMasterMilestone`, and their three `RewardDefinition`s) plus `Phase7DemoController`, which
+registers all of it after Ready and demonstrates one statistic increment (a reported "race
+completed") flowing into a quest objective, an achievement, and a milestone simultaneously — the
+exact reusable composition this phase exists to enable. Verified live in the Editor (Play mode +
+direct service calls): starting the quest, reporting one race completes it and grants its reward
+(idempotently on a repeat claim), ten races completes the achievement, and a hundred reaches the
+milestone.
+
 ## Testing
 
 - Everything in Phase 2 that doesn't need Unity's per-frame lifecycle is EditMode-tested,
@@ -1691,6 +1929,22 @@ before level 3, G = grant XP, U = try unlocking again, R = full status report).
   immediately on the first real test run; the fix (load unconditionally, accept that a removed
   content id just sits unused rather than trying to validate at a point where validation is
   structurally impossible) is documented on both services.
+- Phase 7's `GameFramework.Quests.Tests` (EditMode) reuses the exact Phase 6
+  `TestRegistryFactory`/`TestDefinitions`-via-reflection pattern (`GameFramework.Runtime`'s
+  `AssemblyInfo.cs` grants it the same `InternalsVisibleTo`). `StatisticsServiceTests` covers
+  increment/decrement/monotonic rejection/overflow clamping/session-vs-persistent save behavior.
+  `ConditionTests`/`ConditionObjectiveTests` cover All/Any/Not composition (including the vacuous
+  AND/OR identities) and the Inactive/Active/Completed/Reset objective lifecycle. `QuestServiceTests`
+  covers availability, start, event-driven completion (including that an unrelated statistic change
+  never touches an active quest — the statistic index actually working, not just present),
+  All/Any/Count completion rules, claim idempotency, repeat-policy-gated reset, and save/load
+  round-trips for both an in-progress and a completed-and-claimed quest. `AchievementServiceTests`/
+  `MilestoneServiceTests` cover the same completion/claim/persistence shape for their simpler
+  single-condition/single-threshold cases, plus auto-claim. `IntegrationTests` covers all four flows
+  CLAUDE.md's Phase 7 brief calls out by name: statistic → objective → quest completion; statistic →
+  achievement → reward → currency; XP → level-up → unlock requirement and achievement condition
+  updating together; and quest-complete → save → simulated restart → load → still claimed → replay
+  claim rejected.
 
 ## Phase 0 — Core utilities
 
@@ -1757,4 +2011,9 @@ itself. No concrete currency, item, level curve, unlock, or reward exists for an
 [Sample](#sample) exists for validation/documentation only and is not part of the reusable
 framework. Planned next:
 
-- **Phase 7** — Achievements, Quests & Content Systems (tentative — not yet scoped).
+- **Phase 7** — Objectives, Quests, Achievements & Milestones. Done — see
+  [Objectives, Quests, Achievements & Milestones](#objectives-quests-achievements--milestones).
+  Explicitly out of scope and left for later: daily/weekly quest scheduling, seasons/battle pass,
+  cloud sync/backend validation, remote config, live ops, analytics SDK integration, advanced
+  achievement UI, and quest chains — `ICondition`/`IRewardService`/`IUnlockService` are the seams a
+  later phase would extend, not something this phase builds itself.
