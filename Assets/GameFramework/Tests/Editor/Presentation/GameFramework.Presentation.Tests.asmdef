@@ -1,0 +1,31 @@
+{
+    "name": "GameFramework.Presentation.Tests",
+    "rootNamespace": "GameFramework.Presentation.Tests",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Audio",
+        "GameFramework.Feedback",
+        "GameFramework.Gameplay",
+        "GameFramework.Performance",
+        "GameFramework.UI",
+        "GameFramework.Presentation",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

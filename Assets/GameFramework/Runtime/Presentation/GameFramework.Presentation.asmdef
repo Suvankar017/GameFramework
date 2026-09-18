@@ -1,0 +1,22 @@
+{
+    "name": "GameFramework.Presentation",
+    "rootNamespace": "GameFramework.Presentation",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Audio",
+        "GameFramework.Feedback",
+        "GameFramework.Gameplay",
+        "GameFramework.Performance",
+        "GameFramework.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -48,3 +48,11 @@ using System.Runtime.CompilerServices;
 // ServiceRegistry (fake ITimeService/IInputService, a real EventService/PersistenceService-over-
 // InMemoryPersistenceStorage) for testing TutorialService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.Tutorials.Tests")]
+
+// Phase 10 presentation test assemblies reuse the same pattern to build a minimal, already-
+// initialized ServiceRegistry (fake ITimeService, a real EventService/SettingsService-over-
+// InMemoryPersistenceStorage) for testing PresentationService in isolation. The PlayMode variant
+// additionally needs a real PoolService/GameObjectPool and Object.Destroy, which Unity only allows
+// in Play Mode - see PresentationServiceRuntimeTests's remarks.
+[assembly: InternalsVisibleTo("GameFramework.Presentation.Tests")]
+[assembly: InternalsVisibleTo("GameFramework.Presentation.Tests.Runtime")]

@@ -1,0 +1,52 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4b79cdd3c7a476149aae265859da0cc1, type: 3}
+  m_Name: HeavyImpact
+  m_EditorClassIdentifier: 
+  _id: HeavyImpact
+  _priority: 2
+  _audio:
+    Enabled: 0
+    Cue: {fileID: 0}
+  _haptic:
+    Enabled: 1
+    Strength: 2
+  _camera:
+    Enabled: 1
+    Amplitude: 0.3
+    Frequency: 20
+    Duration: 0.3
+    Falloff:
+      serializedVersion: 2
+      m_Curve: []
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    ConstrainToXY: 0
+  _visual:
+    Enabled: 1
+    EffectPrefab: {fileID: 6824267360386935337, guid: e76ef38227fd65747a7bae61155c9736, type: 3}
+    Lifetime: 1
+    UsePooling: 1
+  _screen:
+    Enabled: 1
+    Color: {r: 1, g: 0, b: 0, a: 0.3}
+    FadeInSeconds: 0.05
+    HoldSeconds: 0
+    FadeOutSeconds: 0.3
+  _ui:
+    Enabled: 1
+    Tag: Impact
+  _time:
+    Enabled: 1
+    TimeScale: 0.05
+    Duration: 0.08

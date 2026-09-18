@@ -10,7 +10,9 @@
         "GameFramework.Unlocks",
         "GameFramework.Rewards",
         "GameFramework.Quests",
-        "GameFramework.Tutorials"
+        "GameFramework.Tutorials",
+        "GameFramework.Presentation",
+        "GameFramework.Audio"
     ],
     "includePlatforms": [
         "Editor"

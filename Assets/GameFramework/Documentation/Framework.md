@@ -5,7 +5,7 @@ tooling and target platforms.
 
 ## Status
 
-**Phase 9 — Tutorial & Onboarding Framework.** Phase 0 laid the structural foundation,
+**Phase 10 — Game Feel, Feedback & Presentation Framework.** Phase 0 laid the structural foundation,
 Phase 1 built Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the
 infrastructure layer (Time, Timers, Events, Persistence, Settings), Phase 3 added five reusable
 player-facing systems (Input, Localization, Audio, UI Foundation, Feedback/Haptics), Phase 4 added
@@ -42,9 +42,20 @@ types, never the framework), prerequisites/repeat/skip/persistence policies, opt
 [Tutorial & Onboarding Framework](#tutorial--onboarding-framework). It deliberately never
 references GameFlow/Gameplay/Progression/Unlocks/Rewards/Quests, so it stays usable by a game that
 has none of those systems.
-The framework still defines no concrete currencies, items, levels, rewards, quests, achievements, or
-actual tutorial content for any specific game — no player character, enemy AI, weapons, economy
-backend, live ops, or IAP exists yet — see [Roadmap](#roadmap).
+Phase 10 adds a coordinated game-feel/presentation orchestration layer on top of Phase 3's Audio/
+Feedback and Phase 4/5's Gameplay/Performance: one registered `IPresentationService` gameplay code
+calls to say "something important happened" (`Play(feedbackId, ...)`), which dispatches a
+`FeedbackDefinition` asset's enabled channels — Audio (via the existing `IAudioService`), Haptics
+(via the existing `IFeedbackService`), Camera shake (a small composable driver a game attaches to
+its own camera), Visual effects (via the existing pooling), Screen flash/fade (rendered through the
+existing UI layer roots, never a new Canvas), UI reactions (published as an event, never a direct
+`UIScreen`/`UIPopup` call), and Time (a brief hit-stop built entirely on the existing `ITimeService`,
+never `Pause`/`Resume`) — without gameplay code knowing how any single channel is implemented. See
+[Game Feel, Feedback & Presentation](#game-feel-feedback--presentation). It is explicitly not a
+replacement for Phase 3's `IFeedbackService`/`IAudioService` - it orchestrates them.
+The framework still defines no concrete currencies, items, levels, rewards, quests, achievements,
+tutorial content, or feedback content for any specific game — no player character, enemy AI,
+weapons, economy backend, live ops, or IAP exists yet — see [Roadmap](#roadmap).
 
 ## Target environment
 
@@ -154,6 +165,26 @@ mirrored, not the assembly reference, since pulling in Quests would drag in Rewa
 Progression too. A game wanting Tutorials alongside GameFlow/Gameplay/Progression/etc. combines
 them in its own small bootstrapper subclass, exactly like every other pair of sibling systems in
 this framework.
+
+`GameFramework.Presentation` (Phase 10) is architecturally different from every sibling above it:
+where Tutorials/GameFlow/Progression deliberately stay *minimal* (Core/Runtime plus at most one
+more), Presentation is a genuine orchestration layer over several existing lower ones by design —
+it references `GameFramework.Core`/`GameFramework.Runtime`/`GameFramework.Audio`/
+`GameFramework.Feedback`/`GameFramework.Gameplay`/`GameFramework.Performance`/`GameFramework.UI`.
+This is still a clean one-way layering, not a new cycle risk: none of those seven assemblies
+reference each other in a way that would loop back, and nothing in them will ever reference
+Presentation. Every one of those references is resolved *softly* at runtime
+(`registry.TryGet`) inside `PresentationService.Initialize` — a game can register Presentation
+alone, with none of Audio/Feedback/Gameplay/Performance/UI present, and it still works, just with
+every channel that needed one of them logging a single "ignored" warning instead of executing. This
+is why `PresentationBootstrapper` is still a plain sibling of `PlayerSystemsBootstrapper`/
+`GameplayBootstrapper`/`PerformanceBootstrapper` (see [Bootstrap Integration](#bootstrap-integration-2))
+rather than extending any of them, even though its *assembly* references far more than a typical
+sibling does. Presentation deliberately never references GameFlow/Progression/Unlocks/Rewards/
+Quests/Tutorials/Localization/Input at all - see
+[Game Feel, Feedback & Presentation](#game-feel-feedback--presentation) for the full channel-by-
+channel reuse breakdown and why `GameFramework.Feedback` (Phase 3's existing haptics+audio-preset
+service) was not overloaded with this orchestration responsibility instead of adding a new assembly.
 
 ## Folder structure
 
@@ -279,9 +310,10 @@ Assets/GameFramework/
 | `GameFramework.Quests` | `Runtime/Quests` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Gameplay` | Conditions, condition-backed Objectives, Quests, Achievements, Milestones (Phase 7). Composition root: `QuestsBootstrapper`. |
 | `GameFramework.GameFlow` | `Runtime/GameFlow` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Gameplay` | Level-load/gameplay-session state machine, sessions, checkpoints/respawn, pause tokens, restart/retry (Phase 8). Composition root: `GameFlowBootstrapper`. |
 | `GameFramework.Tutorials` | `Runtime/Tutorials` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Input` (sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow` — no UI/Localization/Audio/Feedback/Gameplay/GameFlow/Progression/Unlocks/Rewards/Quests reference) | Tutorial lifecycle/state machine, sequential steps (Instruction/Wait/Input/Event/Condition), prerequisites/repeat/skip/persistence policies, optional gameplay pause and input-context gating (Phase 9). Composition root: `TutorialBootstrapper`. |
-| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials` | Editor-only. Localization table, Gameplay config, Quest content, and Tutorial content validation menu items. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
-| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here). |
+| `GameFramework.Presentation` | `Runtime/Presentation` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Audio`, `GameFramework.Feedback`, `GameFramework.Gameplay`, `GameFramework.Performance`, `GameFramework.UI` (every dependency resolved *softly* at runtime — see [Architecture](#architecture)) | Coordinated feedback/presentation orchestration: `FeedbackDefinition` bundles Audio/Haptic/Camera/Visual/Screen/UI/Time channels behind one `IPresentationService.Play` call (Phase 10). Composition root: `PresentationBootstrapper`. |
+| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials`, `GameFramework.Presentation`, `GameFramework.Audio` | Editor-only. Localization table, Gameplay config, Quest content, Tutorial content, and Feedback content validation menu items. |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` / `.Presentation.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` / `.Presentation.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here; Phase 10's visual-effect spawning, since `UnityEngine.Object.Destroy` is refused outside Play Mode). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
 Phase 3 is the opposite case: UI's dependency on Localization/Audio/Feedback (and Feedback's on
@@ -331,6 +363,18 @@ regardless. Unlike Phase 7/8, it deliberately stays a *minimal* sibling — no r
 GameFlow/Progression/Unlocks/Rewards/Quests at all, only Input (for logical-action sampling/context
 gating) — so it remains usable by a game that has none of the framework's other higher-level
 systems, per CLAUDE.md's Phase 9 brief.
+
+Phase 10 gets exactly one new assembly, `GameFramework.Presentation`, for a different reason than
+Phase 9's: not because its seven channels share no dependency boundary (they genuinely don't need
+one - each is its own config type/executor, not cross-referencing the others), but because
+CLAUDE.md's Phase 10 brief explicitly calls out that `GameFramework.Feedback` already exists
+(Phase 3's haptics+audio-preset coordinator) and must not be overloaded with unrelated orchestration
+responsibility - a new, distinctly-named assembly was the correct call, not a name collision to work
+around by cramming Phase 10 into Phase 3's namespace. `Presentation` was chosen over `GameFeel`
+(the brief's other suggested name) as a plainer noun consistent with this framework's existing
+naming (`Progression`, `Unlocks`, `Rewards`, `GameFlow`, `Tutorials`) rather than game-development
+jargon. See [Architecture](#architecture) for why this one assembly's *reference* list is wider than
+every sibling before it, and every one of those references is still resolved softly at runtime.
 
 ## Namespace conventions
 
@@ -2217,6 +2261,188 @@ AI-driven tutorials — `ITutorialCondition`/`IEventService`/`ITutorialService.G
 seams a game's own presentation layer or a later phase would extend, not something this phase builds
 itself.
 
+## Game Feel, Feedback & Presentation
+
+Phase 10. One new assembly, `GameFramework.Presentation`, referencing `GameFramework.Core`/
+`GameFramework.Runtime`/`GameFramework.Audio`/`GameFramework.Feedback`/`GameFramework.Gameplay`/
+`GameFramework.Performance`/`GameFramework.UI` - deliberately **not** GameFlow/Tutorials/
+Progression/Unlocks/Rewards/Quests/Localization/Input (see [Architecture](#architecture) for why
+this one assembly's reference list is wider than every sibling before it, and why that is still
+safe). It is explicitly **not** a replacement for Phase 3's `IFeedbackService`/`IAudioService` - it
+orchestrates them, the same "low-level capability vs. higher-level orchestration" split CLAUDE.md's
+Phase 10 brief asks for.
+
+**Core principle.** Gameplay code describes *what happened*, never *how the player perceives it*:
+
+```csharp
+IPresentationService presentation = GameBootstrapper.Instance.Services.Get<IPresentationService>();
+
+presentation.RegisterDefinition(heavyImpactDefinition); // once, at composition-root time
+presentation.Play(new FeedbackId("HeavyImpact"), worldPosition: impactPoint, intensity: 0.8f);
+```
+
+That single call may dispatch audio, a haptic pulse, a camera shake, a spawned particle effect, a
+screen flash, a UI reaction, and a brief hit-stop - or any subset of those - entirely driven by the
+`FeedbackDefinition` asset registered under that id, never by the call site.
+
+**`FeedbackDefinition`** (`[CreateAssetMenu]`) is pure, shared authoring data - id, `FeedbackPriority`
+(Low/Normal/High/Critical), and one optional config block per channel
+(`Configs.AudioFeedbackConfig`, `.HapticFeedbackConfig`, `.CameraFeedbackConfig`,
+`.VisualEffectFeedbackConfig`, `.ScreenEffectFeedbackConfig`, `.UIFeedbackConfig`,
+`.TimeFeedbackConfig`), each just an `Enabled` flag plus its own typed fields - never a
+`Dictionary<string, object>` payload, and never runtime state (the same asset is shared by every
+`Play` call for its id, for the whole application session). This is a fixed set of typed fields
+rather than a polymorphic `[SerializeReference]` component list, the same reasoning
+`Feedback.FeedbackPresetAsset` (Phase 3) already used for its own smaller haptic+audio bundle - the
+seven channels are a closed set CLAUDE.md's brief enumerates by name, so there is no open-ended
+authoring need a fixed list doesn't already cover.
+
+**`FeedbackRequest`** is the one small, strongly-typed struct gameplay code actually hands the
+service - `FeedbackId`, an optional world position, an optional source object (never inspected by
+this framework, purely for a caller's own diagnostics), and a normalized `[0, 1]` intensity. Every
+instance-varying piece of a request lives here; everything about *how* it is presented lives in the
+paired `FeedbackDefinition`.
+
+**Composable vs. exclusive channels.** Audio/Haptics/Visual/UI simply fire and forget - many
+instances coexist with no notion of "current." Camera shake is composable in a different sense:
+multiple simultaneous shakes sum into one offset (see `CameraShakeState`) rather than replacing each
+other. Screen and Time are exclusive: each has exactly one "current" effect, and a new request only
+interrupts it if the new `FeedbackDefinition.Priority` is greater than or equal to the current one's
+- a lower-priority request while a higher-priority effect is still playing is silently dropped,
+never queued. This is the explicit, deterministic policy CLAUDE.md's brief (sections 20-21) asks for
+instead of arbitrary "last caller wins" behavior.
+
+**Audio integration.** `Configs.AudioFeedbackConfig` requests `IAudioService.Play` for an
+`AudioCueAsset` - never touches an `AudioSource` directly, never duplicates the cue's own
+randomization/limiting. `FeedbackRequest.Intensity` scales the returned `IAudioHandle`'s volume via
+`SetVolume` only below full intensity - at `1.0` the cue's own authored/randomized volume is left
+exactly as `IAudioService` set it up, since `SetVolume` is an absolute override, not a multiplier,
+and there is nothing to read back and scale from.
+
+**Haptic integration.** `Configs.HapticFeedbackConfig` requests `Feedback.IFeedbackService.TriggerHaptic` -
+never `Handheld.Vibrate()` or `IHapticProvider` directly, so the player's "Feedback.HapticsEnabled"
+setting and platform support are already respected. `HapticStrength` is a fixed semantic enum, so
+intensity does not scale it numerically - a documented limitation of the existing abstraction, not
+an oversight.
+
+**Camera integration.** `ICameraFeedbackDriver` is the seam - this framework never assumes a
+specific camera controller/rig. `CameraFeedbackDriver` (a `MonoBehaviour`) is the reference
+implementation: attach it to a game's camera (or a parent rig transform it controls) and it
+self-registers with `IPresentationService.RegisterCameraDriver` in `OnEnable`. Internally,
+`CameraShakeState` (pure, Unity-lifecycle-free C#, unit-testable in EditMode) sums every currently
+active shake's Perlin-noise offset, seeded per shake for determinism (the same seed/amplitude/
+frequency/falloff/elapsed-time always produce the same offset). `CameraFeedbackDriver` applies the
+combined offset in `LateUpdate` (not `Performance.Ticking.ITickService` - CLAUDE.md's own Tick Rules
+call for plain `Update`/`LateUpdate` for "anything simple, low-count, or already working," and a
+scene has exactly one active camera driver) by first subtracting the *previous* frame's offset
+(undoing its own prior contribution) before adding the new one - so an external camera-follow
+script's own per-frame writes are always read cleanly, and this driver never permanently corrupts
+the base pose it's layered on top of. `Configs.CameraFeedbackConfig.ConstrainToXY` zeroes the shake's
+Z axis for a 2D game, without assuming anything about rotation or orthographic size.
+
+**Visual-effect integration.** `Configs.VisualEffectFeedbackConfig` spawns `EffectPrefab` at the
+request's world position and releases it after `Lifetime` seconds. When `UsePooling` is true and a
+`Gameplay.Pooling.IPoolService` is registered, it routes through `IPoolService.GetOrCreate`/
+`GameObjectPool.Get`, with `Runtime.Timers.ITimerService.StartOneShot` (owner-tied to the spawned
+instance) calling `Release` after `Lifetime` - never `Destroy`ing a pooled instance directly.
+Otherwise it falls back to a plain `Object.Instantiate` + `Object.Destroy(instance, lifetime)` - no
+second pooling system, and no dependency on pooling being present at all.
+
+**Screen-effect integration.** `Configs.ScreenEffectFeedbackConfig` (a full-screen flash/fade/hit-
+overlay) is rendered through a single `UnityEngine.UI.Image` this service creates once, lazily,
+parented under the existing `UI.IUIService.GetLayerRoot(UILayer.Overlay)` - never a new `Canvas`.
+`ScreenEffectController` (pure C#, mirrors `CameraShakeState`'s testability) drives a fade-in/hold/
+fade-out state machine; `PresentationService` applies its `CurrentAlpha`/`Color` to the overlay every
+tick and deactivates the GameObject when idle, to avoid continued full-screen overdraw between
+effects.
+
+**UI integration.** `Configs.UIFeedbackConfig` publishes `UIFeedbackRequestedEvent` (id + a
+free-form `Tag` this framework never interprets) instead of calling into `UI.UIScreen`/`UI.UIPopup`
+directly - a game's own UI layer decides what, if anything, to show (a toast, a popup, an icon
+pulse) in response. This is the one channel with no direct Phase 3 UI call at all, deliberately -
+CLAUDE.md's brief is explicit that the core orchestration layer must not hard-code specific UI types.
+
+**Time integration.** `Configs.TimeFeedbackConfig` (a brief hit-stop/slow-motion impulse) is built
+entirely on `ITimeService.SetTimeScale`/`ResetTimeScale` - never `Time.timeScale` directly, and
+never `Pause`/`Resume`, since a hit-stop must never release another system's (GameFlow's,
+Tutorial's, application-background's) gameplay pause. `TimeFeedbackController` (pure C#) tracks only
+*whether* a new request should take over (the same priority-gated exclusive-channel policy as
+Screen) and *when* the current one should end, ticked with **unscaled** delta time specifically
+because the whole point of the effect is to modify the scale, so its own duration cannot depend on
+it.
+
+**Settings integration.** Built entirely on the existing `ISettingsService`/persistence - no second
+settings mechanism. Registers `"Presentation.Enabled"` (master switch), one
+`"Presentation.Channel.<Channel>"` bool per channel (independent accessibility controls - "camera
+shake off" without disabling audio), and `"Presentation.IntensityScale"` (a `[0, 1]` accessibility
+multiplier applied on top of every request's own intensity - CLAUDE.md's brief sections 22-24). The
+per-channel Haptics toggle is intentionally in addition to, not a replacement for, Phase 3's own
+"Feedback.HapticsEnabled" - different scope (whether *this orchestrator* attempts haptics, vs.
+whether haptics are allowed at all for any caller).
+
+**Event integration / feedback mappings.** `IPresentationService.RegisterMapping<TEvent>(id,
+requestFactory)` subscribes a feedback id to fire automatically whenever `TEvent` is published
+through the existing `IEventService` - explicit and strongly typed, never reflection or string-based
+event discovery (CLAUDE.md's brief, section 27). `FeedbackPlayedEvent` (id + `PlayResult`) is
+published after every `Play` call, composable or exclusive channels alike, through the same
+`IEventService` every other cross-system notification in this framework uses.
+
+**GameFlow/Tutorial integration.** No direct reference in either direction, matching the same
+"communicate through events, not direct calls" principle Phase 8 established. A game's own bridge
+code (or nothing at all) turns a `GameFlow.LevelCompletedEvent` or a `Tutorials.TutorialStepStartedEvent`
+into a `Play(...)` call - typically via `RegisterMapping`.
+
+**Performance.** `ProfilingCategory.Presentation` (a new, additive enum value) wraps `Play` in a
+`ProfileScope` - zero-cost when profiling is disabled, the same pattern every other framework
+boundary uses. `PresentationService` implements `Runtime.Services.IUpdatableService` (ticked
+directly by `GameBootstrapper`, the same mechanism `GameFlowService`/`TutorialService` use) rather
+than registering with `Performance.Ticking.ITickService`, specifically so its own housekeeping
+(screen fade progression, time-effect countdown) works even in a game that has not registered
+`PerformanceBootstrapper` at all.
+
+### Bootstrap Integration {#bootstrap-integration-2}
+
+`PresentationBootstrapper` (`GameFramework.Presentation`) registers `IPresentationService` the same
+way every other phase's bootstrapper subclass adds its own service - sibling to
+`PlayerSystemsBootstrapper`/`GameplayBootstrapper`/`PerformanceBootstrapper`, not a base or subclass
+of any of them, even though its assembly references all of Audio/Feedback/Gameplay/Performance/UI:
+every one of those is resolved softly (`registry.TryGet`) inside `PresentationService.Initialize`,
+so the service degrades channel by channel (logging once per missing channel) rather than requiring
+every one of those systems to be registered. A game combines Presentation with whichever channels it
+actually wants (recommended - most of the seven need at least one) in its own small subclass:
+
+```csharp
+public class MyGameBootstrapper : PlayerSystemsBootstrapper
+{
+    protected override void RegisterServices(IServiceRegistry registry)
+    {
+        base.RegisterServices(registry); // Phase 1-3, includes Audio/Feedback/UI
+        registry.Register<IPresentationService>(new PresentationService());
+    }
+}
+```
+
+**Editor validation.** `FeedbackContentValidator` (`GameFramework.Editor`) follows the same pattern
+as `QuestContentValidator`/`TutorialContentValidator`: validate the selected `FeedbackDefinition`
+asset (missing cue/prefab when a channel is enabled, non-positive amplitude/duration, a fully
+transparent screen color, no channel enabled at all), or scan the project for duplicate ids.
+
+**Sample.** `Assets/GameFramework/Samples/Phase10Demo/` demonstrates two `FeedbackDefinition`
+assets - "HeavyImpact" (Haptic+Camera+Screen+Time+Visual+UI together) and "Reward" (Haptic+UI only) -
+combining `PlayerSystemsBootstrapper` with `IPresentationService` in a small
+`Phase10DemoBootstrapper`, plus a scene camera carrying `CameraFeedbackDriver`. The Audio channel is
+left disabled on both demo definitions - wiring it up needs an authored `AudioCueAsset`+`AudioClip`,
+exactly like any other Phase 3 audio content, which this generic sample does not ship its own copy
+of. Not part of the reusable framework.
+
+**Non-goals (explicitly not built).** A full camera framework or Cinemachine replacement, a full
+post-processing framework, a full VFX/particle-system framework, a shader framework, a tweening
+engine, an animation framework, a dialogue/cutscene system, an audio-engine or haptic-engine
+replacement, a UI-framework or input-framework replacement, a Time-system or pooling or
+resource-management replacement, and an analytics/ads/IAP SDK - `ICameraFeedbackDriver`/
+`IEventService`/`FeedbackDefinition`'s own extensibility are the seams a game's own presentation
+layer or a later phase would extend, not something this phase builds itself.
+
 ## Testing
 
 - Everything in Phase 2 that doesn't need Unity's per-frame lifecycle is EditMode-tested,
@@ -2380,6 +2606,43 @@ itself.
   together after this phase's changes — zero regressions), and the Phase9Demo sample's full
   five-step sequence, including a `Repeatable` second run, was additionally verified live in Play
   Mode.
+- Phase 10's `GameFramework.Presentation.Tests` (EditMode) covers the pure-logic pieces directly:
+  `CameraShakeStateTests` (composition of simultaneous shakes, deterministic same-seed-same-output,
+  different seeds producing different output, axis masking, falloff decreasing over time averaged
+  across samples to avoid single-sample noise-variance flakiness, duration expiry), and
+  `ScreenEffectControllerTests`/`TimeFeedbackControllerTests` (fade-in/hold/fade-out sequencing,
+  intensity scaling, the exclusive-channel priority policy - a lower-priority request while active
+  is rejected, equal-or-higher replaces - and cancellation). `PresentationServiceTests` reuses the
+  `TestRegistryFactory` pattern (a fake `ITimeService`, real `EventService`/`SettingsService`-over-
+  `InMemoryPersistenceStorage`/`TimerService`) plus small fakes for `IAudioService`/`IFeedbackService`/
+  `IUIService`/`ICameraFeedbackDriver`, registered per test since `PresentationService` resolves
+  every one of them softly. Covers registration (duplicate/missing id), the master
+  "Presentation.Enabled" switch, per-channel settings disabling only that channel, intensity scaling
+  (including the "no SetVolume call at full intensity" rule), every channel executing correctly
+  when its backing service/driver is present and silently no-op-and-logging-once when it is not,
+  `FeedbackPlayedEvent`/`UIFeedbackRequestedEvent` publication, camera-driver registration (a stale
+  `Unregister` from a different driver never clears the current one), event-to-feedback mappings
+  (registration/duplicate-registration/unregistration), and `Shutdown` resetting an active time
+  effect's time scale. `GameFramework.Presentation.Tests.Runtime` (PlayMode) covers what
+  `PresentationServiceTests` genuinely cannot: the non-pooled visual-effect fallback (`Object.Destroy`
+  with a delay is refused outside Play Mode) spawning a real instance, and the pooled path actually
+  using `Gameplay.Pooling.IPoolService`/`GameObjectPool` and releasing the instance back to the pool
+  once its `Lifetime` elapses (driven by ticking the real `TimerService`).
+- **A real bug this testing caught before it shipped:** the initial `CameraShakeState` noise sampling
+  fed an integer `Seed` summed with a `sampleTime` that could itself land on a whole number, against
+  a constant `0f` second coordinate — classic Perlin noise is exactly `0` at integer lattice points,
+  so two *different* seeds could silently produce the *identical* (near-zero) offset whenever both
+  happened to land on such a point, exactly the case `Tick_DifferentSeeds_ProduceDifferentOffsets`
+  hit on the first real run. Fixed by offsetting every axis with distinct golden-ratio-derived,
+  non-integer constants, which also decorrelates the three axes better than the original symmetric
+  x/y sampling did. Separately, an early version of the non-pooled visual-effect EditMode test tried
+  to call `UnityEngine.Object.Destroy(instance, lifetime)` from an EditMode test context, which Unity
+  refuses outright ("Destroy may not be called from edit mode!") — not a framework bug, but the
+  reason that one case of Phase 10 coverage lives in `.Tests.Runtime` instead. All 46 Phase 10
+  EditMode tests and 2 PlayMode tests pass; the full project suite (617 EditMode + 76 PlayMode tests
+  project-wide) was re-run after this phase with zero regressions, and the Phase10Demo sample's
+  "HeavyImpact" definition (all six wired channels) and "Reward" definition, plus the master
+  "Presentation.Enabled" toggle, were additionally verified live in Play Mode.
 
 ## Phase 0 — Core utilities
 
@@ -2469,3 +2732,11 @@ framework. Planned next:
   analytics/ads/IAP SDK, remote config, multiplayer tutorials, and AI-driven tutorials —
   `ITutorialCondition`/`IEventService`/`ITutorialService.GetDefinition` are the seams a game's own
   presentation layer or a later phase would extend, not something this phase builds itself.
+- **Phase 10** — Game Feel, Feedback & Presentation. Done — see
+  [Game Feel, Feedback & Presentation](#game-feel-feedback--presentation). Explicitly out of scope
+  and left for later (see that section's own "Non-goals"): a full camera framework/Cinemachine
+  replacement, a full post-processing or VFX/particle-system framework, a shader framework, a
+  tweening/animation framework, a dialogue/cutscene system, and an analytics/ads/IAP SDK -
+  `ICameraFeedbackDriver`/`IEventService`/`FeedbackDefinition`'s own extensibility are the seams a
+  game's own presentation layer or a later phase would extend, not something this phase builds
+  itself.

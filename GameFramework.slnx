@@ -9,10 +9,12 @@
   <Project Path="GameFramework.Performance.csproj" />
   <Project Path="GameFramework.Tutorials.Tests.csproj" />
   <Project Path="GameFramework.Editor.csproj" />
+  <Project Path="GameFramework.Presentation.Tests.csproj" />
   <Project Path="GameFramework.Runtime.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase4Demo.csproj" />
   <Project Path="GameFramework.Tutorials.csproj" />
   <Project Path="GameFramework.Input.csproj" />
+  <Project Path="GameFramework.Presentation.csproj" />
   <Project Path="GameFramework.GameFlow.csproj" />
   <Project Path="GameFramework.Quests.csproj" />
   <Project Path="GameFramework.PlayerSystems.csproj" />
@@ -34,6 +36,7 @@
   <Project Path="GameFramework.Core.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase9Demo.csproj" />
   <Project Path="GameFramework.PlayerSystems.Tests.Runtime.csproj" />
+  <Project Path="GameFramework.Samples.Phase10Demo.csproj" />
   <Project Path="GameFramework.Samples.Phase3Demo.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Runtime.Tests.Runtime.csproj" />
@@ -42,6 +45,7 @@
   <Project Path="GameFramework.Samples.Phase1Demo.csproj" />
   <Project Path="GameFramework.Core.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase7Demo.csproj" />
+  <Project Path="GameFramework.Presentation.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Audio.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase0Demo.csproj" />
   <Project Path="GameFramework.Localization.Tests.csproj" />

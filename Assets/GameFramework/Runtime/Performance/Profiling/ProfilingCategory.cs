@@ -17,6 +17,11 @@ namespace GameFramework.Performance.Profiling
         Physics,
         Rendering,
         Loading,
-        Persistence
+        Persistence,
+
+        /// <summary>Phase 10's <c>GameFramework.Presentation</c> orchestration boundary (feedback
+        /// dispatch, camera shake, screen effects) - distinct from <see cref="Audio"/>/<see cref="UI"/>,
+        /// which already cover their own lower-level playback/rendering work.</summary>
+        Presentation
     }
 }

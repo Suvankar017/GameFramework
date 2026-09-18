@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 9 — Tutorial & Onboarding Framework**, on top of:
+**Phase 10 — Game Feel, Feedback & Presentation Framework**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -38,11 +38,17 @@ that most games need, without any game-specific content.
   `IEventService`/`IPersistenceService` and Phase 3's `IInputService` only; it never references
   GameFlow/Gameplay/Progression/Unlocks/Rewards/Quests, so it stays usable by a game that has none
   of those systems.
+- **Phase 10** — a coordinated game-feel/presentation orchestration layer: one registered
+  `IPresentationService` gameplay code calls (`Play(feedbackId, ...)`) to dispatch a
+  `FeedbackDefinition`'s enabled channels (Audio/Haptics/Camera/Visual/Screen/UI/Time) without
+  knowing how any one is implemented — it orchestrates Phase 3's `IAudioService`/`IFeedbackService`
+  and Phase 4/5's pooling/UI layer roots, never duplicates them; every one of those dependencies is
+  resolved softly, so it degrades channel by channel rather than requiring all of them registered.
 
 No player character, enemy AI, weapons, ads, analytics, IAP, remote config, or multiplayer exists
-yet, and no concrete currency/item/level/unlock/reward/quest/achievement/tutorial-content is defined
-for any specific game — those consume this infrastructure, they don't live in it. See
-`Assets/GameFramework/Documentation/Framework.md`'s Roadmap section for what each phase explicitly
+yet, and no concrete currency/item/level/unlock/reward/quest/achievement/tutorial-content/feedback-
+content is defined for any specific game — those consume this infrastructure, they don't live in
+it. See `Assets/GameFramework/Documentation/Framework.md`'s Roadmap section for what each phase explicitly
 left out and the seams a later phase would extend.
 
 ## Target Environment
@@ -105,6 +111,16 @@ Audio/Feedback, so tutorial infrastructure stays usable by a game with none of t
 higher-level systems; it reuses `IInputService`'s existing context stack for input gating and
 `ITimeService`'s existing `Pause`/`Resume` for optional gameplay pause, with no new abstraction for
 either.
+`GameFramework.Presentation` (Phase 10) breaks the "minimal sibling" pattern deliberately: it
+references `GameFramework.Core`/`GameFramework.Runtime`/`GameFramework.Audio`/`GameFramework.Feedback`/
+`GameFramework.Gameplay`/`GameFramework.Performance`/`GameFramework.UI` — a genuine orchestration
+layer over several existing lower ones, not a new cycle (none of those seven reference each other in
+a loop, and nothing in them ever references Presentation). Every one of those references is still
+resolved *softly* at runtime (`registry.TryGet`), so a game can register Presentation alone and it
+still works, just with each channel missing its backing service logging one warning instead of
+executing. It deliberately never references GameFlow/Tutorials/Progression/Unlocks/Rewards/Quests/
+Localization/Input at all, and is explicitly not a replacement for `GameFramework.Feedback`'s
+existing haptics+audio-preset coordination — it orchestrates it.
 
 Everything is wired together by `GameBootstrapper`, which registers and initializes services in a
 load-bearing order: Logging → GameState → Scene → Time → Timer → Event → Persistence → Settings,
@@ -117,8 +133,10 @@ then (via `PlayerSystemsBootstrapper`) Input → Localization → Audio → UI �
 it has a real compile-time dependency on Rewards) `IStatisticsService` → `IQuestService` →
 `IAchievementService` → `IMilestoneService`, (via `GameFlowBootstrapper`, or a game's own
 combined subclass, registered after `IGameplayService` so its soft lookup succeeds)
-`IGameFlowService`, and (via `TutorialBootstrapper`, or a game's own combined subclass, registered
-after `IInputService` so its soft lookup succeeds) `ITutorialService`.
+`IGameFlowService`, (via `TutorialBootstrapper`, or a game's own combined subclass, registered
+after `IInputService` so its soft lookup succeeds) `ITutorialService`, and (via
+`PresentationBootstrapper`, or a game's own combined subclass, registered after whichever of Audio/
+Feedback/Gameplay/Performance/UI are wanted so its soft lookups succeed) `IPresentationService`.
 
 ## Assemblies
 
@@ -140,7 +158,8 @@ after `IInputService` so its soft lookup succeeds) `ITutorialService`.
 | `GameFramework.Quests` | Conditions (composable, statistic-driven), condition-backed Objectives, Quests, Achievements, threshold Milestones (Phase 7). Composition root: `QuestsBootstrapper` (extends `ProgressionBootstrapper`). References Progression/Unlocks/Rewards/Gameplay. |
 | `GameFramework.GameFlow` | Level-load/gameplay-session state machine (`LevelFlowState`), `GameplaySession`, session-scoped checkpoints/respawn, reference-counted pause tokens, restart/retry (Phase 8). Composition root: `GameFlowBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression` — references only Core/Runtime/Gameplay. |
 | `GameFramework.Tutorials` | Tutorial lifecycle/state machine, sequential steps (Instruction/Wait/Input/Event/Condition), prerequisites/repeat/skip/persistence policies, optional gameplay pause and input-context gating (Phase 9). Composition root: `TutorialBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow` — references only Core/Runtime/Input. |
-| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, and Tutorial content validation menu items. |
+| `GameFramework.Presentation` | Coordinated feedback/presentation orchestration: `FeedbackDefinition` bundles Audio/Haptic/Camera/Visual/Screen/UI/Time channels behind one `IPresentationService.Play` call (Phase 10). Composition root: `PresentationBootstrapper`. References Audio/Feedback/Gameplay/Performance/UI, every one resolved softly at runtime. |
+| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, and Feedback content validation menu items. |
 | Matching `*.Tests` / `*.Tests.Runtime` assemblies | EditMode/PlayMode test coverage per system (see Testing below). |
 
 Full per-assembly reference tables and namespace listings live in
@@ -307,6 +326,24 @@ Full per-assembly reference tables and namespace listings live in
   to hold this pause); optional input gating reuses `IInputService`'s existing context stack.
   `TutorialRepeatPolicy` (Once/Repeatable/OncePerSession)/`TutorialSkipPolicy`/
   `TutorialPersistencePolicy` (None/CompletionOnly/ResumeProgress) are per-tutorial authored policies.
+- **Game Feel / Presentation** (`IPresentationService`, Phase 10) — `Play(feedbackId, ...)` dispatches
+  a `FeedbackDefinition`'s enabled channels without gameplay code knowing how any one is implemented:
+  Audio (`IAudioService.Play`, intensity scales volume only below full intensity so a cue's own
+  randomized volume is never clobbered at 1.0), Haptics (`Feedback.IFeedbackService.TriggerHaptic`),
+  Camera shake (`ICameraFeedbackDriver` + `CameraShakeState`, a pure, seeded, composable
+  Perlin-noise accumulator a game's own `CameraFeedbackDriver` applies non-destructively on top of
+  whatever wrote the camera's transform that frame), Visual effects (spawned through
+  `Gameplay.Pooling.IPoolService` when registered, else a plain `Instantiate`/`Destroy`), Screen
+  flash/fade (one `Image` this service creates lazily under the existing `UI.IUIService` layer root,
+  driven by pure `ScreenEffectController`), UI reactions (`UIFeedbackRequestedEvent` only — never a
+  direct `UIScreen`/`UIPopup` call), and Time/hit-stop (`ITimeService.SetTimeScale`/`ResetTimeScale`
+  only, never `Pause`/`Resume`, via pure `TimeFeedbackController`). Screen and Time are the two
+  *exclusive* channels — a lower-priority request while one is active is dropped, equal-or-higher
+  replaces it; every other channel is fire-and-forget composable. Every one of Audio/Feedback/
+  Gameplay(pooling)/UI is a soft (`registry.TryGet`) dependency, so the service degrades channel by
+  channel rather than requiring all of them registered. Settings-integrated: a master
+  "Presentation.Enabled" switch, one enable toggle per channel, and a global
+  "Presentation.IntensityScale" accessibility multiplier.
 
 Complete API examples, edge cases, and design rationale for every system are documented in
 `Assets/GameFramework/Documentation/Framework.md` — treat that file as the authoritative reference.
@@ -373,6 +410,24 @@ Complete API examples, edge cases, and design rationale for every system are doc
   section. 93/93 Phase 9 tests pass; the full project suite (571 EditMode + 74 PlayMode tests) was
   re-run after this phase with zero regressions, and the Phase9Demo sample's full step sequence
   (including a `Repeatable` second run) was additionally verified live in Play Mode.
+- Phase 10: `GameFramework.Presentation.Tests` (EditMode) covers the pure-logic pieces
+  (`CameraShakeState`, `ScreenEffectController`, `TimeFeedbackController`) directly, plus
+  `PresentationServiceTests` against the same `TestRegistryFactory` pattern with small fakes for
+  `IAudioService`/`IFeedbackService`/`IUIService`/`ICameraFeedbackDriver` (registered per test, since
+  every one is a soft dependency). Covers registration, the master/per-channel/intensity-scale
+  settings, every channel executing when its backing service is present and silently no-op-logging
+  once when it isn't, event publication, camera-driver registration safety, event-to-feedback
+  mappings, and `Shutdown` resetting an active time effect. `GameFramework.Presentation.Tests.Runtime`
+  (PlayMode) covers visual-effect spawning (both the pooled and plain-`Instantiate` paths), since the
+  non-pooled fallback's `Object.Destroy(instance, lifetime)` is refused outside Play Mode. A real bug
+  (`CameraShakeState`'s original noise sampling could land different seeds on the same Perlin-noise
+  integer lattice point, producing identical offsets) was caught by
+  `Tick_DifferentSeeds_ProduceDifferentOffsets` on the first real run and fixed by offsetting every
+  axis with distinct non-integer constants — see Framework.md's Testing section. 46/46 Phase 10
+  EditMode tests and 2/2 PlayMode tests pass; the full project suite (617 EditMode + 76 PlayMode
+  tests) was re-run after this phase with zero regressions, and the Phase10Demo sample's
+  "HeavyImpact" (six channels) and "Reward" definitions, plus the master enable/disable setting, were
+  additionally verified live in Play Mode.
 
 ## Packages / Dependencies
 
@@ -388,13 +443,14 @@ Assets/GameFramework/
 ├── Runtime/            One folder + .asmdef per system (Core, Bootstrap, Services, Diagnostics,
 │                        State, SceneManagement, Time, Timers, Events, Persistence, Settings,
 │                        Input, Localization, Audio, Feedback, UI, PlayerSystems, Gameplay,
-│                        Performance, Progression, Unlocks, Rewards, Quests, GameFlow, Tutorials)
-├── Editor/              Editor-only tooling (Localization, Gameplay config, Quest content, and
-│                        Tutorial content validators)
+│                        Performance, Progression, Unlocks, Rewards, Quests, GameFlow, Tutorials,
+│                        Presentation)
+├── Editor/              Editor-only tooling (Localization, Gameplay config, Quest content,
+│                        Tutorial content, and Feedback content validators)
 ├── Samples/              Phase0Demo/ … Phase4Demo/ (one per phase), Phase5Benchmark/,
-│                         Phase6Demo/, Phase7Demo/, Phase9Demo/ (each with authored Content/
-│                         ScriptableObject assets) — Phase 8 intentionally has no sample yet (see
-│                         Framework.md's Phase 8 section for why)
+│                         Phase6Demo/, Phase7Demo/, Phase9Demo/, Phase10Demo/ (each with authored
+│                         Content/ ScriptableObject assets) — Phase 8 intentionally has no sample
+│                         yet (see Framework.md's Phase 8 section for why)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```
