@@ -7,8 +7,11 @@
   <Project Path="GameFramework.Progression.csproj" />
   <Project Path="GameFramework.Unlocks.Tests.csproj" />
   <Project Path="GameFramework.Performance.csproj" />
+  <Project Path="GameFramework.Tutorials.Tests.csproj" />
+  <Project Path="GameFramework.Editor.csproj" />
   <Project Path="GameFramework.Runtime.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase4Demo.csproj" />
+  <Project Path="GameFramework.Tutorials.csproj" />
   <Project Path="GameFramework.Input.csproj" />
   <Project Path="GameFramework.GameFlow.csproj" />
   <Project Path="GameFramework.Quests.csproj" />
@@ -29,8 +32,8 @@
   <Project Path="GameFramework.Rewards.Tests.csproj" />
   <Project Path="GameFramework.Unlocks.csproj" />
   <Project Path="GameFramework.Core.Tests.csproj" />
+  <Project Path="GameFramework.Samples.Phase9Demo.csproj" />
   <Project Path="GameFramework.PlayerSystems.Tests.Runtime.csproj" />
-  <Project Path="GameFramework.Editor.csproj" />
   <Project Path="GameFramework.Samples.Phase3Demo.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Runtime.Tests.Runtime.csproj" />

@@ -5,7 +5,7 @@ tooling and target platforms.
 
 ## Status
 
-**Phase 8 — Game Flow, Gameplay Sessions & State Orchestration.** Phase 0 laid the structural foundation,
+**Phase 9 — Tutorial & Onboarding Framework.** Phase 0 laid the structural foundation,
 Phase 1 built Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the
 infrastructure layer (Time, Timers, Events, Persistence, Settings), Phase 3 added five reusable
 player-facing systems (Input, Localization, Audio, UI Foundation, Feedback/Haptics), Phase 4 added
@@ -32,9 +32,19 @@ reference-counted pause with labeled tokens (built entirely on Phase 2's existin
 `IGameFlowService` that never references Progression/Unlocks/Rewards/Quests directly, only ever
 notifying them via events — see
 [Game Flow, Sessions & Checkpoints](#game-flow-sessions--checkpoints).
-The framework still defines no concrete currencies, items, levels, rewards, quests, or achievements
-for any specific game — no player character, enemy AI, weapons, economy backend, live ops, or IAP
-exists yet — see [Roadmap](#roadmap).
+Phase 9 adds a reusable tutorial/onboarding execution layer on top of Core/Runtime/Input only: a
+lifecycle-managed `ITutorialService` (Inactive → Starting → Running ⇄ Paused →
+Completing/Cancelling → Completed/Cancelled), a minimal sequential step model with five built-in
+step types (Instruction, Wait, Input, Event, Condition — game code supplies its own condition/event
+types, never the framework), prerequisites/repeat/skip/persistence policies, optional gameplay pause
+(built on `ITimeService`, no new pause abstraction) and optional input-context gating (built on
+`IInputService`'s existing context stack) — see
+[Tutorial & Onboarding Framework](#tutorial--onboarding-framework). It deliberately never
+references GameFlow/Gameplay/Progression/Unlocks/Rewards/Quests, so it stays usable by a game that
+has none of those systems.
+The framework still defines no concrete currencies, items, levels, rewards, quests, achievements, or
+actual tutorial content for any specific game — no player character, enemy AI, weapons, economy
+backend, live ops, or IAP exists yet — see [Roadmap](#roadmap).
 
 ## Target environment
 
@@ -129,6 +139,21 @@ below everything else": `GameFramework.Gameplay` itself takes a one-way referenc
 `GameFramework.Performance` (not the other way around) so `GameObjectPool`/`Spawner` can use
 `ProfileScope` and `GameObjectPool` can expose `PoolStatistics` — a lower layer providing
 diagnostics that a higher layer opts into, not a dependency cycle.
+
+`GameFramework.Tutorials` (Phase 9) references only `GameFramework.Core`/`GameFramework.Runtime`/
+`GameFramework.Input` — deliberately **not** GameFlow/Gameplay/Performance/Progression/Unlocks/
+Rewards/Quests/UI/Localization/Audio/Feedback. It reuses `IInputService`'s existing logical-action
+sampling and context stack (an `InputStep` reads an action; a tutorial optionally pushes/pops one
+`InputContextDefinition` for its whole run) and `ITimeService`'s existing reference-counted
+`Pause`/`Resume` (a `TutorialPausePolicy.PausesGameplay` tutorial calls `Pause`/`Resume` directly —
+no new pause-token type, since unlike `GameFramework.GameFlow.IPauseToken` nothing external needs
+to hold or release this pause itself). A `ConditionStep` wraps a small local `ITutorialCondition`
+rather than reusing `GameFramework.Quests.Conditions.ICondition`, for the same reason
+`GameFramework.Quests` didn't reuse `GameFramework.Unlocks.IUnlockRequirement`: the shape is
+mirrored, not the assembly reference, since pulling in Quests would drag in Rewards/Unlocks/
+Progression too. A game wanting Tutorials alongside GameFlow/Gameplay/Progression/etc. combines
+them in its own small bootstrapper subclass, exactly like every other pair of sibling systems in
+this framework.
 
 ## Folder structure
 
@@ -253,8 +278,9 @@ Assets/GameFramework/
 | `GameFramework.Rewards` | `Runtime/Rewards` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression`, `GameFramework.Unlocks` | Idempotent, transaction-safe reward grant orchestration. Composition root: `ProgressionBootstrapper`. |
 | `GameFramework.Quests` | `Runtime/Quests` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Gameplay` | Conditions, condition-backed Objectives, Quests, Achievements, Milestones (Phase 7). Composition root: `QuestsBootstrapper`. |
 | `GameFramework.GameFlow` | `Runtime/GameFlow` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Gameplay` | Level-load/gameplay-session state machine, sessions, checkpoints/respawn, pause tokens, restart/retry (Phase 8). Composition root: `GameFlowBootstrapper`. |
-| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests` | Editor-only. Localization table, Gameplay config, and Quest content validation menu items. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Tutorials` | `Runtime/Tutorials` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Input` (sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow` — no UI/Localization/Audio/Feedback/Gameplay/GameFlow/Progression/Unlocks/Rewards/Quests reference) | Tutorial lifecycle/state machine, sequential steps (Instruction/Wait/Input/Event/Condition), prerequisites/repeat/skip/persistence policies, optional gameplay pause and input-context gating (Phase 9). Composition root: `TutorialBootstrapper`. |
+| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials` | Editor-only. Localization table, Gameplay config, Quest content, and Tutorial content validation menu items. |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
 | `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
@@ -296,6 +322,15 @@ Unlocks, Rewards, Gameplay) regardless. Statistics is the one Phase 7 exception:
 *namespace inside* `GameFramework.Progression` rather than its own assembly, since it needs no
 reference `GameFramework.Progression` doesn't already have and is a natural sibling of
 Economy/Inventory/Experience.
+
+Phase 9 gets exactly one new assembly, `GameFramework.Tutorials`, rather than splitting the step
+system/conditions/persistence into more: they share no dependency boundary worth enforcing against
+each other (the same reasoning behind every other phase's internal-namespace-vs-new-assembly
+decision above), and the whole system needs the same three-reference set (Core/Runtime/Input)
+regardless. Unlike Phase 7/8, it deliberately stays a *minimal* sibling — no reference on Gameplay/
+GameFlow/Progression/Unlocks/Rewards/Quests at all, only Input (for logical-action sampling/context
+gating) — so it remains usable by a game that has none of the framework's other higher-level
+systems, per CLAUDE.md's Phase 9 brief.
 
 ## Namespace conventions
 
@@ -1980,6 +2015,208 @@ public class MyGameBootstrapper : GameplayBootstrapper
 }
 ```
 
+## Tutorial & Onboarding Framework
+
+Phase 9. One new assembly, `GameFramework.Tutorials`, referencing only `GameFramework.Core`/
+`GameFramework.Runtime`/`GameFramework.Input` — deliberately **not** Gameplay/GameFlow/Performance/
+Progression/Unlocks/Rewards/Quests/UI/Localization/Audio/Feedback (see [Architecture](#architecture)).
+It provides tutorial *infrastructure* — lifecycle, sequencing, input/event/condition triggers, pause/
+input gating, persistence, events — never tutorial *content*: no concrete tutorial, no game-specific
+condition, no UI. A game defines what a tutorial teaches; this assembly only knows how to run it.
+
+**Lifecycle.** `TutorialState` (`Inactive → Starting → Running ⇄ Paused → Completing → Completed`,
+and `Running/Paused → Cancelling → Cancelled`), driven by `TutorialLifecycleStateMachine`'s fixed
+allowed-transition table — the same concrete-not-generic, internal-only shape as
+`GameFlow.LevelFlowStateMachine`. Skipping is deliberately not a separate state: `ITutorialService.Skip`
+ends the run through the same Completing/Completed path a normal finish uses, distinguished only by
+which event is published (`TutorialSkippedEvent` instead of `TutorialCompletedEvent`) and by the
+persisted "was skipped" flag. `Completed`/`Cancelled` are terminal-but-transient — the service
+auto-returns to `Inactive` immediately after publishing the outcome event, freeing the "one active
+tutorial" slot without a separate reset call:
+
+```text
+Inactive → Starting → Running ⇄ Paused
+                          │        │
+                          ▼        ▼
+                      Completing  Cancelling
+                          │           │
+                          ▼           ▼
+                      Completed   Cancelled
+                          │           │
+                          └─────┬─────┘
+                                ▼
+                            Inactive (auto)
+```
+
+Only one tutorial is ever active at a time. `Start` rejects a request outright
+(`TutorialStartResult.Blocked`) while a *different* tutorial is running — never queued, matching
+`IGameFlowService`'s "one active level flow" policy. Every command returns a result
+(`TutorialStartResult` for `Start`; the shared `TutorialCommandResult` for
+`Skip`/`Cancel`/`Restart`/`CompleteCurrentStep`) instead of throwing, and every command wraps its
+transition and every event it publishes in one re-entrancy guard — a listener that calls another
+command from inside, say, a `TutorialCompletedEvent` handler gets `TutorialCommandResult.Blocked`/
+`TutorialStartResult.Blocked` back rather than corrupting the in-progress transition, the same
+pattern `GameFlowService` established.
+
+```csharp
+ITutorialService tutorials = GameBootstrapper.Instance.Services.Get<ITutorialService>();
+
+tutorials.RegisterTutorial(firstDriveDefinition, new[]
+{
+    new TutorialStepEntry(introStepDefinition, new InstructionStep("Intro")),
+    new TutorialStepEntry(pressMoveStepDefinition, new InputStep("PressMove", input, "Move")),
+    new TutorialStepEntry(waitForMovementStepDefinition, new EventStep<CarStartedMovingEvent>("WaitForMovement", events)),
+    new TutorialStepEntry(checkpointStepDefinition, new ConditionStep("ReachCheckpoint", new DelegateTutorialCondition(() => car.ReachedCheckpoint))),
+    new TutorialStepEntry(outroStepDefinition, new InstructionStep("Outro"))
+});
+
+tutorials.Start(new TutorialId("FirstDrive"));
+// ... later, e.g. from a "Got it" button ...
+tutorials.CompleteCurrentStep();
+```
+
+**Step system.** `ITutorialStep` (`TutorialStepBase` for the shared implementation) is a small
+NotStarted → Active → (Completed | Cancelled) state machine per step, with a `Reset()` back to
+NotStarted — necessary because the same step *instances* passed to `RegisterTutorial` are reused
+across every run of that tutorial (a `Repeatable` replay, `Restart`, or `Cancel` followed by a later
+`Start`); `TutorialService` calls `Reset()` on every step immediately before beginning a run. Five
+built-in step types cover CLAUDE.md's Phase 9 brief in full:
+
+- **`InstructionStep`** — completes on explicit acknowledgement (`ITutorialService.CompleteCurrentStep`)
+  or, if given a positive delay, automatically after that many unscaled seconds. With no delay, this
+  is also the framework's "Manual/External Completion Step" — a pure gate for a game-specific
+  condition that should stay outside the framework.
+- **`WaitStep`** — completes after a fixed unscaled-time duration.
+- **`InputStep`** — waits for a logical `IInputService` action (`Pressed`/`Held`/`Released`, via
+  `InputTriggerType`) — never a physical key.
+- **`EventStep<TEvent>`** — completes when a matching `IEventService` event is published, with an
+  optional predicate; subscribes in `Begin`/unsubscribes in the step's end, so a cancelled step never
+  leaves a dangling subscription.
+- **`ConditionStep`** — wraps a local `ITutorialCondition` (`IsSatisfied`/`Describe`, mirroring
+  `Quests.Conditions.ICondition`'s shape without the assembly reference — see
+  [Architecture](#architecture)); checked once on begin and once per tick while active. Unlike
+  `GameFramework.Quests`' statistic-indexed event-driven evaluation (built to avoid polling a
+  potentially large *set* of simultaneously-active quests), polling here is cheap by construction:
+  at most one active step, for at most one active tutorial. `DelegateTutorialCondition` is the one
+  concrete condition the framework ships, wrapping a game-supplied `Func<bool>`.
+
+Display text is never carried by a runtime step: `TutorialStepDefinition` (a small
+`[CreateAssetMenu]` `ScriptableObject`, mirroring `Gameplay.Objectives.ObjectiveDefinition`'s
+id/localization-key-only shape) is the paired authoring asset a UI resolves instead — see
+`TutorialStepEntry`, which pairs a step's display data with its runtime behavior exactly like
+`Quests.Quests.QuestObjectiveEntry` pairs an `ObjectiveDefinition` with an `ICondition`.
+
+**Authoring.** `TutorialDefinition` (`[CreateAssetMenu]`) carries only id, display/description
+localization keys, `TutorialId[]` prerequisites, and four policies:
+
+- `TutorialRepeatPolicy` — `Once` (persisted completion blocks every future `Start`, across
+  restarts), `Repeatable` (always startable again once finished), `OncePerSession` (blocked only for
+  the remainder of the current process — a fresh session, even with the same persisted "completed"
+  flag loaded, allows one more start).
+- `TutorialSkipPolicy` — `NotSkippable` / `Skippable`.
+- `TutorialPausePolicy` — `DoesNotPauseGameplay` / `PausesGameplay`.
+- `TutorialPersistencePolicy` — `None` (never persisted, even once completed), `CompletionOnly`
+  (default — only whether it completed/was skipped; an interrupted run always restarts from the
+  first step), `ResumeProgress` (also persists the current step index while running, so an
+  application restart mid-tutorial resumes from that step on the next `Start` instead of
+  restarting).
+
+No step content is embedded in `TutorialDefinition` — exactly like `Quests.Quests.QuestDefinition`
+leaves objectives to be composed in code, a tutorial's step sequence is built in code and passed to
+`RegisterTutorial`, since an input/event/condition wiring cannot be authored purely as Inspector
+data without a `[SerializeReference]` custom drawer this framework deliberately avoids (see
+`QuestObjectiveEntry`'s own remarks for the identical reasoning).
+
+**Input integration.** `InputStep` reads a logical action through the existing `IInputService` —
+no second input-sampling path. Input *gating* (restricting what the rest of the game can do while a
+tutorial runs) is a tutorial-wide, not per-step, concern: `RegisterTutorial`'s optional
+`InputContextDefinition?` parameter is pushed onto `IInputService`'s existing context stack once
+when the tutorial starts and popped exactly once when it ends (`Completed`/`Cancelled`/`Shutdown`
+mid-run) — no new context-stack mechanism, reusing `PushContext`/`PopContext` exactly as a UI popup
+already does.
+
+**Pause integration.** Built entirely on `ITimeService.Pause`/`Resume`'s existing reference
+counting — no new pause-token type. A `PausesGameplay` tutorial calls `Pause` once when it starts
+and `Resume` exactly once when it ends (guarded by a bool, idempotent); unlike
+`GameFlow.IGameFlowService.PauseGameplay`, this pause is never handed to an external caller as a
+token, so a full `IPauseToken`-style abstraction would be unused ceremony here. Separately,
+`TutorialState` reactively mirrors `ITimeService.IsPaused` every tick (the same reactive-pause
+pattern `GameFlowService`/`GameplayService` already established) — a tutorial correctly suspends its
+own step progression (`WaitStep`/`InstructionStep` timers, `ConditionStep` polling, `InputStep`
+sampling all stop ticking while `Paused`) if *anything* pauses gameplay, not only its own acquired
+pause. The one-frame ordering hazard this creates — a `PausesGameplay` tutorial's own `Pause` call
+would otherwise be immediately observed as an "external" pause on the very next tick — is resolved
+by pre-seeding the reactive-poll baseline right after acquiring the pause, the same trick
+`GameFlowService.StartLevelInternal` already uses.
+
+**Event integration.** Every tutorial-level notification (`TutorialStartedEvent`,
+`TutorialStepStartedEvent`/`TutorialStepCompletedEvent`, `TutorialPausedEvent`/`TutorialResumedEvent`,
+`TutorialCompletedEvent`/`TutorialSkippedEvent`/`TutorialCancelledEvent`, `TutorialRestartedEvent`)
+publishes through the existing `IEventService` — the same mechanism every other cross-system
+notification in this framework uses. UI/presentation code (arrows, highlights, a "Got it" popup,
+voice-over) observes these and `TutorialStepStartedEvent`'s paired `TutorialStepDefinition`
+(resolved via `ITutorialService.GetDefinition`) rather than the framework depending on any concrete
+UI type — the same separation `GameFlow`'s events give level/session presentation.
+
+**Persistence.** Built entirely on the existing `IPersistenceService` — no second save system.
+Follows the exact registration-after-Load ordering problem this framework already hit once in Phase
+6 (`UnlockService`/`RewardService`): `RegisterTutorial` normally runs after
+`ITutorialService.Initialize` (game content typically needs another already-initialized service, or
+just hasn't been wired up yet), so `Load` stages persisted per-tutorial state into a pending-restore
+map that each `RegisterTutorial` call consumes for its own id — a tutorial registered after `Load`
+never silently loses its persisted completion. Persisted data is treated as untrusted: mismatched
+column lengths or an unresolvable id are logged and ignored rather than indexed out of range or
+applied to a nonexistent tutorial.
+
+**GameFlow integration.** No direct reference in either direction. `Tutorials → Input/Pause/Events`
+only; a game's own bridge code (or nothing at all) turns a `GameFlow.LevelReadyEvent` into
+`tutorials.Start(...)`, or a `TutorialCompletedEvent` into whatever the game wants next — the same
+"communicate through events, not direct calls" principle Phase 8 established between `GameFlow` and
+Progression/Rewards/Quests. A tutorial never mutates `LevelFlowState` and `GameFlowService` never
+knows a tutorial exists.
+
+### Bootstrap Integration
+
+`TutorialBootstrapper` (`GameFramework.Tutorials`) registers `ITutorialService` the same way every
+other phase's bootstrapper subclass adds its own service — sibling to `GameFlowBootstrapper`/
+`GameplayBootstrapper`/`PerformanceBootstrapper`/`PlayerSystemsBootstrapper`, not a base or subclass
+of any of them. `IInputService` is a soft dependency (`registry.TryGet`) — `ITutorialService` works
+fully without Input registered at all, it just then never gates input and any `InputStep` a game
+registers stays permanently un-completable (a content-authoring mistake, not a framework failure). A
+game combines Tutorials with Input (recommended, for `InputStep`/input gating) in its own small
+subclass, registering `ITutorialService` *after* `IInputService`:
+
+```csharp
+public class MyGameBootstrapper : PlayerSystemsBootstrapper
+{
+    protected override void RegisterServices(IServiceRegistry registry)
+    {
+        base.RegisterServices(registry); // Phase 1-3, includes IInputService
+        registry.Register<ITutorialService>(new TutorialService());
+    }
+}
+```
+
+**Editor validation.** `TutorialContentValidator` (`GameFramework.Editor`) follows the same pattern
+as `QuestContentValidator`/`GameplayConfigValidator`: validate the selected `TutorialDefinition`/
+`TutorialStepDefinition` asset, or scan the project for duplicate ids and dangling prerequisites
+(a `TutorialDefinition` requiring a prerequisite id no asset in the project declares).
+
+**Sample.** `Assets/GameFramework/Samples/Phase9Demo/` demonstrates a "FirstDrive" tutorial spanning
+all five built-in step types (Instruction → Input → Event → Condition → Instruction), combining
+`PlayerSystemsBootstrapper` (for `IInputService`) with `ITutorialService` in a small
+`Phase9DemoBootstrapper`, plus pause/skip/cancel/restart and completion persistence — content assets
+under `Content/` are authored `.asset` files (matching the `TutorialDefinition`/
+`TutorialStepDefinition` private-field-with-`OnValidate` authoring shape), not code-built like
+Phase 3's Input map. Not part of the reusable framework.
+
+**Non-goals (explicitly not built).** A visual tutorial/node-graph editor, a hand/pointer animation
+system, a tweening framework, a dialogue/voice-over/cutscene framework, a quest/achievement system
+(that's `GameFramework.Quests`), an analytics/ads/IAP SDK, remote config, multiplayer tutorials, or
+AI-driven tutorials — `ITutorialCondition`/`IEventService`/`ITutorialService.GetDefinition` are the
+seams a game's own presentation layer or a later phase would extend, not something this phase builds
+itself.
+
 ## Testing
 
 - Everything in Phase 2 that doesn't need Unity's per-frame lifecycle is EditMode-tested,
@@ -2105,6 +2342,44 @@ public class MyGameBootstrapper : GameplayBootstrapper
   playing→failure→retry→new session→playing; complete→save→simulated restart→load→checkpoint still
   resolves). All 48 Phase 8 tests pass, alongside the full existing suite (478 EditMode + 74
   PlayMode tests project-wide, verified together after this phase's changes — zero regressions).
+- Phase 9's `GameFramework.Tutorials.Tests` (EditMode) reuses the same `TestRegistryFactory`
+  pattern every phase since 3 has used (a fake `ITimeService`/`IInputService`, real
+  `EventService`/`PersistenceService`-over-`InMemoryPersistenceStorage`).
+  `TutorialLifecycleStateMachineTests` covers the transition table directly.
+  `TutorialStepTests` covers each built-in step type in isolation, including `Reset()` restoring a
+  Completed/Cancelled step to NotStarted (see below) and `WaitStep` not retaining elapsed time
+  across a reset. `TutorialServiceTests` covers start/complete/skip/cancel/restart, all three
+  repeat policies, prerequisites (unmet/met/unregistered), an empty step list completing
+  immediately, and duplicate/missing-id registration errors. `TutorialPauseAndInputGatingTests`
+  covers `PausesGameplay` acquiring/releasing exactly once without the tutorial observing its own
+  acquisition as an external pause, reactive Paused/Running on an external pause/resume, step
+  ticking correctly freezing while Paused, and input-context push/pop (including on `Shutdown`
+  mid-tutorial). `TutorialReentrancyAndCleanupTests` covers a command issued from inside a
+  Started/StepCompleted/Completed event handler being blocked without corrupting the in-progress
+  transition, a multi-step zero-duration cascade completing in one command with events published in
+  the correct order, an `EventStep` unsubscribing on cancel, and double-`Cancel` not double-releasing
+  pause. `TutorialPersistenceTests` covers all three persistence policies, the registration-after-
+  Load ordering this framework already hit once in Phase 6, `OncePerSession` allowing a start in a
+  new session despite a persisted completed flag, and corrupted (mismatched-length) save data being
+  ignored rather than crashing. `IntegrationTests` covers the full Instruction→Input→Event→
+  Condition→Instruction sequence end to end, skip-then-restart, cancel-then-normal-replay, and a
+  prerequisite-gated tutorial becoming startable after its prerequisite completes, saves, and
+  reloads under a simulated restart.
+- **A real bug this testing caught before it shipped:** the same `ITutorialStep` *instances* passed
+  to `RegisterTutorial` are reused across every run of a tutorial (a `Repeatable` replay, `Restart`,
+  or `Cancel` followed by a later `Start`) — but the first implementation gave `ITutorialStep` no way
+  back to `NotStarted`, so a step that already reached `Completed`/`Cancelled` once silently refused
+  to `Begin` again, corrupting the second run's sequencing (observed as a run landing on the wrong
+  step, or a `Restart` after full completion collapsing straight back to `Inactive` as every already-
+  completed step cascaded past itself). Five tests failed on the first real run
+  (`Cancel_ThenStartAgain_BeginsFromFirstStep`, `Restart_WhileMidRun_...`,
+  `Restart_AfterOnceCompletion_...`, and the two matching `IntegrationTests`); the fix added
+  `ITutorialStep.Reset()` (and `TutorialStepBase`'s implementation of it), called on every step of a
+  tutorial immediately before `TutorialService` begins a new run. All 93 Phase 9 tests pass,
+  alongside the full existing suite (571 EditMode + 74 PlayMode tests project-wide, verified
+  together after this phase's changes — zero regressions), and the Phase9Demo sample's full
+  five-step sequence, including a `Repeatable` second run, was additionally verified live in Play
+  Mode.
 
 ## Phase 0 — Core utilities
 
@@ -2187,3 +2462,10 @@ framework. Planned next:
   server-authoritative sessions, cloud resume, an advanced replay system, and tournament/season
   flow — `IGameFlowService`/`GameplaySession`/`CheckpointSystem` are the seams a later phase would
   extend, not something this phase builds itself.
+- **Phase 9** — Tutorial & Onboarding Framework. Done — see
+  [Tutorial & Onboarding Framework](#tutorial--onboarding-framework). Explicitly out of scope and
+  left for later (see that section's own "Non-goals"): a visual tutorial/node-graph editor, a
+  hand/pointer animation system, a tweening framework, a dialogue/voice-over/cutscene framework, an
+  analytics/ads/IAP SDK, remote config, multiplayer tutorials, and AI-driven tutorials —
+  `ITutorialCondition`/`IEventService`/`ITutorialService.GetDefinition` are the seams a game's own
+  presentation layer or a later phase would extend, not something this phase builds itself.

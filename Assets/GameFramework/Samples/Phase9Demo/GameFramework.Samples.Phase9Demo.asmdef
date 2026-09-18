@@ -1,0 +1,21 @@
+{
+    "name": "GameFramework.Samples.Phase9Demo",
+    "rootNamespace": "GameFramework.Samples.Phase9Demo",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Input",
+        "GameFramework.PlayerSystems",
+        "GameFramework.Tutorials",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -43,3 +43,8 @@ using System.Runtime.CompilerServices;
 // ServiceRegistry (fake ITimeService/ISceneService, a real EventService/PersistenceService-over-
 // InMemoryPersistenceStorage) for testing GameFlowService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.GameFlow.Tests")]
+
+// Phase 9 tutorial test assembly reuses the same pattern to build a minimal, already-initialized
+// ServiceRegistry (fake ITimeService/IInputService, a real EventService/PersistenceService-over-
+// InMemoryPersistenceStorage) for testing TutorialService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.Tutorials.Tests")]

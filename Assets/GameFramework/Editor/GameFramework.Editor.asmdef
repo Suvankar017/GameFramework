@@ -9,7 +9,8 @@
         "GameFramework.Progression",
         "GameFramework.Unlocks",
         "GameFramework.Rewards",
-        "GameFramework.Quests"
+        "GameFramework.Quests",
+        "GameFramework.Tutorials"
     ],
     "includePlatforms": [
         "Editor"
