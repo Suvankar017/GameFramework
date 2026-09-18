@@ -5,7 +5,7 @@ tooling and target platforms.
 
 ## Status
 
-**Phase 7 — Objectives, Quests, Achievements & Milestones.** Phase 0 laid the structural foundation,
+**Phase 8 — Game Flow, Gameplay Sessions & State Orchestration.** Phase 0 laid the structural foundation,
 Phase 1 built Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the
 infrastructure layer (Time, Timers, Events, Persistence, Settings), Phase 3 added five reusable
 player-facing systems (Input, Localization, Audio, UI Foundation, Feedback/Haptics), Phase 4 added
@@ -24,6 +24,14 @@ a composable Condition system, condition-backed Objectives (extending Phase 4's 
 machine), Quests, Achievements, and threshold Milestones, all claiming rewards through Phase 6's
 existing idempotent `IRewardService` — see
 [Objectives, Quests, Achievements & Milestones](#objectives-quests-achievements--milestones).
+Phase 8 adds the reusable game-flow/orchestration layer on top of all of that: one state machine
+(`LevelFlowState`) covering level-load lifecycle and gameplay-session state together, a generic
+`GameplaySession` (attempt tracking, elapsed time, result), session-scoped checkpoints/respawn,
+reference-counted pause with labeled tokens (built entirely on Phase 2's existing
+`ITimeService.Pause`/`Resume`), and restart/retry flows — all driven by one registered
+`IGameFlowService` that never references Progression/Unlocks/Rewards/Quests directly, only ever
+notifying them via events — see
+[Game Flow, Sessions & Checkpoints](#game-flow-sessions--checkpoints).
 The framework still defines no concrete currencies, items, levels, rewards, quests, or achievements
 for any specific game — no player character, enemy AI, weapons, economy backend, live ops, or IAP
 exists yet — see [Roadmap](#roadmap).
@@ -244,8 +252,9 @@ Assets/GameFramework/
 | `GameFramework.Unlocks` | `Runtime/Unlocks` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression` | Composable requirement-gated unlock tracking. |
 | `GameFramework.Rewards` | `Runtime/Rewards` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression`, `GameFramework.Unlocks` | Idempotent, transaction-safe reward grant orchestration. Composition root: `ProgressionBootstrapper`. |
 | `GameFramework.Quests` | `Runtime/Quests` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Gameplay` | Conditions, condition-backed Objectives, Quests, Achievements, Milestones (Phase 7). Composition root: `QuestsBootstrapper`. |
+| `GameFramework.GameFlow` | `Runtime/GameFlow` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Gameplay` | Level-load/gameplay-session state machine, sessions, checkpoints/respawn, pause tokens, restart/retry (Phase 8). Composition root: `GameFlowBootstrapper`. |
 | `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests` | Editor-only. Localization table, Gameplay config, and Quest content validation menu items. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
 | `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
@@ -326,6 +335,9 @@ Block-style namespaces only, never file-scoped. Current namespaces:
 - `GameFramework.Performance.Resources` — `IAssetHandle<T>`, `IAssetProvider`, `ResourcesAssetProvider`.
 - `GameFramework.Performance.Mobile` — `DeviceInfo`, `PerformanceProfile`, `PerformanceProfileConfig`, `IMobilePerformanceService`, `MobilePerformanceService`, `IApplicationLifecycleService`, `ApplicationLifecycleService`, `ApplicationPausedEvent`/`ApplicationResumedEvent`/`ApplicationFocusChangedEvent`/`ApplicationQuittingEvent`.
 - `GameFramework.Gameplay.Pooling` also gains `PoolStatistics` in Phase 5 (see [Pooling](#pooling) — extended, not moved).
+- `GameFramework.GameFlow` — `LevelFlowState`, `TransitionResult`, `LevelFlowStateMachine` (internal), `LevelId`, `LevelDefinition`, `GameplayResult`/`GameplayResultKind`, `LevelLoadResult`, `RespawnResult`, `IGameFlowService`, `GameFlowService`, `GameFlowBootstrapper`, `IPauseToken`, and the `*Event` structs listed under [Game Flow, Sessions & Checkpoints](#game-flow-sessions--checkpoints).
+- `GameFramework.GameFlow.Session` — `SessionId`, `GameplaySession`, `GameplaySessionState`.
+- `GameFramework.GameFlow.Checkpoints` — `IGameplaySnapshot`, `CheckpointRecord`, `CheckpointSystem`.
 
 A naming note: `GameFramework.Runtime.Time` and `GameFramework.Runtime.Timers` share a word with
 `UnityEngine.Time`/nothing, respectively, but that hasn't caused the ambiguity you might expect —
@@ -1840,6 +1852,134 @@ direct service calls): starting the quest, reporting one race completes it and g
 (idempotently on a repeat claim), ten races completes the achievement, and a hundred reaches the
 milestone.
 
+## Game Flow, Sessions & Checkpoints
+
+Phase 8. One new assembly, `GameFramework.GameFlow`, referencing only `GameFramework.Core`/
+`GameFramework.Runtime`/`GameFramework.Gameplay` — deliberately **not** Performance/Progression/
+Unlocks/Rewards/Quests/Input/UI/Audio/Feedback. It sits one layer above Gameplay Infrastructure (it
+reuses `GameFramework.Gameplay.IGameplayService` to start/stop ticking gameplay participants
+alongside a session, and `GameFramework.Gameplay.Objectives.CheckpointData` as the built-in
+transform-checkpoint shape) but never references Phase 6/7 — completion/failure/restart only ever
+*publish events*; a game's own bridge code (or nothing at all, if it doesn't need one) is what
+turns a `LevelCompletedEvent` into a statistic increment, an unlock check, or a reward claim. This
+keeps Phase 8 usable by a game that has no progression content at all, and keeps Phase 6/7 unaware
+Phase 8 exists.
+
+**One state machine, not two.** CLAUDE.md's Phase 8 brief distinguishes "gameplay state" from
+"level/stage flow" conceptually, but they describe the same lifecycle in practice (Loading →
+Initializing → Ready → Playing → Paused → Completing/Failing → Completed/Failed → Restarting →
+Exiting) — `LevelFlowState` (`GameFramework.GameFlow`) is the one concrete state machine Phase 8
+ships, driven by `LevelFlowStateMachine`'s fixed allowed-transition table (internal — only
+`GameFlowService` drives it):
+
+```text
+Unloaded → Loading → Initializing → Ready → Playing ⇄ Paused
+                                       │        │
+                            ┌──────────┼────────┘
+                            ▼          ▼
+                       Completing  Failing → Failed ──(Respawn)──→ Playing
+                            │          │        │
+                            ▼          │        │
+                       Completed ──────┴────────┤
+                            │                    │
+                            └──────► Restarting ─┤ (reload → Loading, or straight → Ready)
+                                                  │
+                    Ready/Playing/Paused/Completed/Failed ──► Exiting → Unloaded
+```
+
+`Failed → Playing` is the one transition reachable only through `GameFlowService.Respawn()` — no
+other command ever requests it. Every command returns a `TransitionResult`
+(Success/AlreadyInState/InvalidTransition/TransitionBlocked) or a dedicated result enum
+(`LevelLoadResult`, `RespawnResult`) instead of throwing, matching every other "normal gameplay
+outcome" API in this framework.
+
+```csharp
+IGameFlowService flow = GameBootstrapper.Instance.Services.Get<IGameFlowService>();
+
+flow.LoadLevel(level1Definition);                 // → Loading, watches ISceneService.SceneLoaded
+// ... once ready ...
+flow.StartLevel();                                 // → Playing, creates a new GameplaySession
+flow.CompleteLevel(GameplayResult.Success("Finished"));
+flow.Retry();                                       // new attempt, same level
+```
+
+**Re-entrancy.** Every public command wraps its state transition *and* every event it publishes in
+one guard, so a listener that calls another command from inside, say, a `LevelCompletedEvent`
+handler gets `TransitionResult.TransitionBlocked`/`RespawnResult.Blocked` back rather than
+corrupting the in-progress transition — this is the "queue or reject explicitly" choice CLAUDE.md's
+brief calls for, and this framework rejects (matching `IGameStateService`'s existing precedent).
+
+**Scene loading is event-driven, not polled.** `LoadLevel` calls `ISceneService.LoadAsync` but
+detects completion through `ISceneService.SceneLoaded` rather than polling the `AsyncOperation` it
+returns — deliberately, since an `AsyncOperation` cannot be constructed or driven manually outside
+of a real engine scene load, which would make `GameFlowService` untestable in EditMode. `ExitLevel`
+called mid-load simply stops listening (Unity itself cannot abort an in-flight scene load — see
+`ISceneService`'s own remarks — so the scene may still finish loading in the background, but this
+service's own state never reflects that stale completion).
+
+**Pause is fully delegated to `ITimeService`.** `PauseGameplay(reason)` returns an `IPauseToken`
+wrapping exactly one `ITimeService.Pause()`/`Resume()` pair — releasing it never resumes gameplay
+while another token (or an entirely unrelated `ITimeService.Pause()` caller, e.g. Phase 5's
+`ApplicationLifecycleService` backgrounding the app) is still outstanding, since `ITimeService`
+itself already reference-counts. `LevelFlowState` reactively mirrors `ITimeService.IsPaused` every
+tick (`GameFlowService.Tick`, via `IUpdatableService` — the same mechanism `GameplayService`/
+`TimerService`/`TickService` all use for their own primary tick), the same reactive-pause pattern
+`GameplayService` already established for Phase 4 — no new pause mechanism was introduced.
+
+**`GameplaySession`** (`GameFramework.GameFlow.Session`) is a generic attempt — `SessionId`,
+`LevelId`, `AttemptNumber`, `Mode`, `ElapsedGameplayTime` (accumulated `ScaledDeltaTime`, only while
+Active), `PauseCount`, `RespawnCount`, `Result`, and an owned `CheckpointSystem`. Mutation methods
+are internal — exactly one session is ever active per `GameFlowService`, enforced by construction.
+`Retry` always creates a new session (new `SessionId`, incremented `AttemptNumber`); `Respawn` is
+the one operation that continues the *same* session/attempt instead — CLAUDE.md's brief is explicit
+that these are not the same operation, and this is where that distinction lives in code.
+
+**Checkpoints stay session-scoped and transient by default.** `CheckpointSystem` (`GameFramework.
+GameFlow.Checkpoints`) is a plain, session-owned registry (Register/Activate/GetCurrent/Reset/
+Clear) — carries data only, exactly like Phase 4's `Checkpoint` marker it composes with (a game
+typically registers one entry per `Checkpoint` in the scene, from `Checkpoint.GetData()`). A
+checkpoint entry pairs the built-in transform (`CheckpointData?`) with an optional
+`IGameplaySnapshot` — a marker interface for whatever extra state a specific game's checkpoint
+needs (health, ammo, ...) that this framework never inspects, serializes, or persists; only the
+transform is ever persisted, and only when `IGameFlowService.PersistCheckpoints` is explicitly set
+true (`Runtime.Persistence.IPersistenceService`, key `"GameFramework.GameFlow.Checkpoint"`, the same
+explicit-Save + no-auto-save policy every other persisted service in this framework follows).
+`Respawn()` never leaves gameplay half-restored: GameFlow only ever touches its own state when a
+valid checkpoint is found (`RespawnResult.NoCheckpoint` otherwise, a deterministic result the caller
+can react to, e.g. by calling `Retry()` as a fallback) — actually moving/resetting "the player" is
+never this framework's job; `Respawn()` publishes `PlayerRespawnedEvent` and a game's own player
+controller reacts to it, since GameFlow does not know what a player is.
+
+**Events.** `LevelFlowStateChangedEvent`, `LevelLoadingStartedEvent`/`LevelInitializingEvent`/
+`LevelReadyEvent`, `LevelStartedEvent`/`GameplaySessionStartedEvent`,
+`GameplaySessionPausedEvent`/`GameplaySessionResumedEvent`,
+`GameplaySessionCompletedEvent`/`LevelCompletedEvent`,
+`GameplaySessionFailedEvent`/`LevelFailedEvent`, `LevelRestartedEvent`, `LevelExitedEvent`,
+`CheckpointActivatedEvent`, `PlayerRespawnedEvent` — all published through the existing Phase 2
+`IEventService`, all immutable readonly structs carrying `LevelId`/`SessionId`/`AttemptNumber`/
+result context, never a mutable reference into live GameFlow state.
+
+### Game Flow Integration {#game-flow-integration-3}
+
+`GameFlowBootstrapper` (`GameFramework.GameFlow`) registers `IGameFlowService` the same way every
+other phase's bootstrapper subclass adds its own service — sibling to `GameplayBootstrapper`/
+`PerformanceBootstrapper`/`PlayerSystemsBootstrapper`, not a base or subclass of any of them, since
+its one soft dependency (`Gameplay.IGameplayService`, resolved via `registry.TryGet`) does not
+require a real compile-time/registration dependency. A game combines it with Gameplay
+Infrastructure (recommended, so sessions actually start/stop ticking participants) in its own small
+subclass, registering `IGameFlowService` *after* `IGameplayService` so the soft lookup succeeds:
+
+```csharp
+public class MyGameBootstrapper : GameplayBootstrapper
+{
+    protected override void RegisterServices(IServiceRegistry registry)
+    {
+        base.RegisterServices(registry); // Phase 1-4, includes IGameplayService
+        registry.Register<IGameFlowService>(new GameFlowService());
+    }
+}
+```
+
 ## Testing
 
 - Everything in Phase 2 that doesn't need Unity's per-frame lifecycle is EditMode-tested,
@@ -1945,6 +2085,26 @@ milestone.
   achievement → reward → currency; XP → level-up → unlock requirement and achievement condition
   updating together; and quest-complete → save → simulated restart → load → still claimed → replay
   claim rejected.
+- Phase 8's `GameFramework.GameFlow.Tests` (EditMode) fakes both `ITimeService` and `ISceneService`
+  (a real `AsyncOperation` cannot be constructed or driven manually outside of an actual engine
+  scene load, so `FakeSceneService.RaiseSceneLoaded` stands in for it — see
+  [Game Flow, Sessions & Checkpoints](#game-flow-sessions--checkpoints)) alongside a real
+  `EventService`/`PersistenceService`-over-`InMemoryPersistenceStorage`, the same
+  `TestRegistryFactory` pattern every phase since 3 has used. `LevelFlowStateMachineTests` covers
+  the transition table directly (valid/invalid/already-in-state, the Failed→Playing respawn-only
+  edge, bounded history). `GameFlowServiceTests` covers load/ready/start, reactive pause/resume
+  (including two independent `PauseGameplay` token owners), complete/fail with default vs. explicit
+  `GameplayResult`, respawn (no session/no checkpoint/success, both from Playing and from Failed),
+  retry with and without a scene reload, exit (including cancelling a load in progress and
+  confirming a stale `SceneLoaded` afterward is ignored), attempt-number tracking across retries, a
+  re-entrant command issued from inside an event handler being blocked, and a persisted-checkpoint
+  round trip across two separate `GameFlowService` instances sharing one `PersistenceService`.
+  `CheckpointSystemTests` covers `CheckpointSystem` in isolation. `IntegrationTests` covers the five
+  named flows from CLAUDE.md's Phase 8 brief end to end (load→ready→start→playing→complete;
+  playing→pause→resume→playing; playing→checkpoint→failure→respawn→playing, same attempt;
+  playing→failure→retry→new session→playing; complete→save→simulated restart→load→checkpoint still
+  resolves). All 48 Phase 8 tests pass, alongside the full existing suite (478 EditMode + 74
+  PlayMode tests project-wide, verified together after this phase's changes — zero regressions).
 
 ## Phase 0 — Core utilities
 
@@ -2017,3 +2177,13 @@ framework. Planned next:
   cloud sync/backend validation, remote config, live ops, analytics SDK integration, advanced
   achievement UI, and quest chains — `ICondition`/`IRewardService`/`IUnlockService` are the seams a
   later phase would extend, not something this phase builds itself.
+- **Phase 8** — Game Flow, Gameplay Sessions & State Orchestration. Done — see
+  [Game Flow, Sessions & Checkpoints](#game-flow-sessions--checkpoints). Explicitly out of scope
+  and left for later: a visual state-machine editor, a development inspector/debug HUD for the
+  current flow state (`PerformanceOverlay`'s pattern would be the natural template, but nothing
+  measured this as a real need yet), a level-graph/next-level-sequencing system (the framework
+  deliberately never assumes levels are linear — a game calls `LoadLevel` with whatever it decides
+  is next), advanced cutscene integration, a multiplayer/online-match session layer,
+  server-authoritative sessions, cloud resume, an advanced replay system, and tournament/season
+  flow — `IGameFlowService`/`GameplaySession`/`CheckpointSystem` are the seams a later phase would
+  extend, not something this phase builds itself.

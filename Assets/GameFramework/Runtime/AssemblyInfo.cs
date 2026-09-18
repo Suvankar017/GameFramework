@@ -38,3 +38,8 @@ using System.Runtime.CompilerServices;
 // InMemoryPersistenceStorage plus a fake ITimeService) for testing Statistics/Quest/Achievement/
 // Milestone services in isolation.
 [assembly: InternalsVisibleTo("GameFramework.Quests.Tests")]
+
+// Phase 8 game-flow test assembly reuses the same pattern to build a minimal, already-initialized
+// ServiceRegistry (fake ITimeService/ISceneService, a real EventService/PersistenceService-over-
+// InMemoryPersistenceStorage) for testing GameFlowService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.GameFlow.Tests")]

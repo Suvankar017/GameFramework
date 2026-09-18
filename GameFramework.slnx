@@ -1,6 +1,7 @@
 ﻿<Solution>
   <Project Path="GameFramework.UI.csproj" />
   <Project Path="GameFramework.Runtime.csproj" />
+  <Project Path="GameFramework.GameFlow.Tests.csproj" />
   <Project Path="GameFramework.Gameplay.csproj" />
   <Project Path="GameFramework.Rewards.csproj" />
   <Project Path="GameFramework.Progression.csproj" />
@@ -9,6 +10,7 @@
   <Project Path="GameFramework.Runtime.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase4Demo.csproj" />
   <Project Path="GameFramework.Input.csproj" />
+  <Project Path="GameFramework.GameFlow.csproj" />
   <Project Path="GameFramework.Quests.csproj" />
   <Project Path="GameFramework.PlayerSystems.csproj" />
   <Project Path="GameFramework.Localization.csproj" />

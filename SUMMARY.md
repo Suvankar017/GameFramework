@@ -1,12 +1,13 @@
 # Project Summary — GameFramework
 
 A reusable Unity framework intended to be shared across multiple mobile games, providing the
-foundational services (bootstrap, persistence, UI, audio, input, localization, feedback) that most
-games need, without any game-specific content.
+foundational services (bootstrap, persistence, UI, audio, input, localization, feedback, gameplay
+infrastructure, performance, progression/economy, quests/achievements, and game-flow orchestration)
+that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 6 — Progression, Rewards, Economy & Inventory**, on top of:
+**Phase 8 — Game Flow, Gameplay Sessions & State Orchestration**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -21,12 +22,21 @@ games need, without any game-specific content.
 - **Phase 6** — player-progression content systems: Economy (multi-currency), Inventory (item
   ownership/quantities), Experience (levels/XP), Unlocks (composable requirement-gated content),
   Rewards (idempotent, transaction-safe grant orchestration).
+- **Phase 7** — Statistics, a composable Condition system, condition-backed Objectives (extending
+  Phase 4's objective state machine), Quests, Achievements, and threshold Milestones — all claiming
+  rewards through Phase 6's existing idempotent `IRewardService`.
+- **Phase 8** — the reusable game-flow/orchestration layer: one state machine
+  (`LevelFlowState`) covering level-load lifecycle and gameplay-session state together, a generic
+  `GameplaySession` (attempt tracking, elapsed time, result), session-scoped checkpoints/respawn,
+  reference-counted pause with labeled tokens (built entirely on Phase 2's `ITimeService`), and
+  restart/retry flows — one registered `IGameFlowService` that never references Progression/
+  Unlocks/Rewards/Quests directly, only ever notifying them via events.
 
-No player character, enemy AI, weapons, quests, achievements, tutorial, ads, analytics, IAP,
-remote config, or multiplayer exists yet, and no concrete currency/item/level curve/unlock/reward
-is defined for any specific game — those consume this infrastructure, they don't live in it.
-**Phase 7 (Achievements, Quests & Content Systems)** is a tentative, not-yet-scoped candidate for
-what comes next.
+No player character, enemy AI, weapons, tutorial, ads, analytics, IAP, remote config, or
+multiplayer exists yet, and no concrete currency/item/level/unlock/reward/quest/achievement is
+defined for any specific game — those consume this infrastructure, they don't live in it. See
+`Assets/GameFramework/Documentation/Framework.md`'s Roadmap section for what each phase explicitly
+left out and the seams a later phase would extend.
 
 ## Target Environment
 
@@ -47,15 +57,17 @@ Strict one-way dependency direction (a lower layer never references a higher one
 
 ```text
 Game / Game Features
-        ↓                                      ↓
-GameFramework.PlayerSystems             GameFramework.Gameplay
-(registers Input/Localization/          (Loop, Entities, Lifecycle, Spawning, Pooling,
- Audio/UI/Feedback)                      Commands, Interaction, Objectives)
-        ↓                                      ↓
-GameFramework.UI  →  GameFramework.Localization, GameFramework.Audio, GameFramework.Feedback
-        ↓                                      │
-GameFramework.Input                            │
-        ↓                                      ↓
+        ↓                    ↓                    ↓                  ↓
+GameFramework.PlayerSystems  GameFramework.Gameplay  GameFramework.Quests  GameFramework.GameFlow
+(registers Input/Loc/         (Loop, Entities,        (Conditions,          (LevelFlowState,
+ Audio/UI/Feedback)            Lifecycle, Spawning,     Objectives, Quests,   GameplaySession,
+        ↓                      Pooling, Commands,       Achievements,         Checkpoints, Pause)
+GameFramework.UI →              Interaction,            Milestones)                ↓
+ Localization, Audio,           Objectives)                  ↓             (references only
+ Feedback                          ↓                  GameFramework.Rewards  Core/Runtime/Gameplay;
+        ↓                          │                  GameFramework.Unlocks  soft-depends on
+GameFramework.Input                │                  GameFramework.Progression  IGameplayService)
+        ↓                          ↓                          ↓
 GameFramework.Runtime   (Bootstrap, Services, Diagnostics, State, SceneManagement,
         ↓                Time, Timers, Events, Persistence, Settings)
 GameFramework.Core       (Validation, Extensions — zero dependencies)
@@ -69,18 +81,30 @@ Infrastructure stays independent of Player Experience. `GameFramework.Performanc
 third sibling, referencing only Core/Runtime, so it stays usable regardless of which of the other
 two a game also uses; `GameFramework.Gameplay`'s one-way reference *on* it (for pooling's profiling
 markers/statistics) is the only new cross-assembly edge Phase 5 added. `GameFramework.Progression`
-(Phase 6, housing Economy/Inventory/Experience) is a fourth sibling, also Core/Runtime only;
-`GameFramework.Unlocks` sits above it (requirement types reference Progression's read APIs) and
-`GameFramework.Rewards` sits above both (orchestrates all four) — a real one-way chain, the same
-reasoning Phase 3 used to split UI from Localization/Audio/Feedback. Everything is wired together
-by `GameBootstrapper`, which registers and initializes services in a load-bearing order (Logging →
-GameState → Scene → Time → Timer → Event → Persistence → Settings), then (via
-`PlayerSystemsBootstrapper`) Input → Localization → Audio → UI → Feedback, (via
+(Phase 6, housing Economy/Inventory/Experience, plus Phase 7's Statistics namespace) is a fourth
+sibling, also Core/Runtime only; `GameFramework.Unlocks` sits above it (requirement types reference
+Progression's read APIs) and `GameFramework.Rewards` sits above both (orchestrates all four) — a
+real one-way chain, the same reasoning Phase 3 used to split UI from Localization/Audio/Feedback.
+`GameFramework.Quests` (Phase 7) sits above Rewards/Unlocks/Progression *and* references
+`GameFramework.Gameplay` (for `IObjective`/`ObjectiveBase`) — the one assembly in the framework that
+legitimately spans both chains, since nothing downstream needs to. `GameFramework.GameFlow`
+(Phase 8) is a fifth sibling of PlayerSystems/Gameplay/Performance/Progression — it references only
+Core/Runtime/Gameplay (a soft `TryGet` dependency on `IGameplayService`, never a hard one) and
+deliberately never references Progression/Unlocks/Rewards/Quests at all; completion/failure/restart
+are only ever published as events for those systems (or a game's own code) to react to.
+
+Everything is wired together by `GameBootstrapper`, which registers and initializes services in a
+load-bearing order: Logging → GameState → Scene → Time → Timer → Event → Persistence → Settings,
+then (via `PlayerSystemsBootstrapper`) Input → Localization → Audio → UI → Feedback, (via
 `GameplayBootstrapper`, or a game's own combined subclass) `IGameplayService` → `IPoolService`, (via
-`PerformanceBootstrapper`, or a game's own combined subclass) `ITickService` →
-`IPerformanceMonitorService` → `IApplicationLifecycleService` → `IMobilePerformanceService`, and
-(via `ProgressionBootstrapper`, or a game's own combined subclass) `IEconomyService` →
-`IInventoryService` → `IExperienceService` → `IUnlockService` → `IRewardService`.
+`PerformanceBootstrapper`) `ITickService` → `IPerformanceMonitorService` →
+`IApplicationLifecycleService` → `IMobilePerformanceService`, (via `ProgressionBootstrapper`)
+`IEconomyService` → `IInventoryService` → `IExperienceService` → `IUnlockService` →
+`IRewardService`, (via `QuestsBootstrapper`, which extends `ProgressionBootstrapper` directly since
+it has a real compile-time dependency on Rewards) `IStatisticsService` → `IQuestService` →
+`IAchievementService` → `IMilestoneService`, and (via `GameFlowBootstrapper`, or a game's own
+combined subclass, registered after `IGameplayService` so its soft lookup succeeds)
+`IGameFlowService`.
 
 ## Assemblies
 
@@ -96,10 +120,12 @@ GameState → Scene → Time → Timer → Event → Persistence → Settings), 
 | `GameFramework.PlayerSystems` | Composition root (`PlayerSystemsBootstrapper`) wiring the five Phase 3 services in. |
 | `GameFramework.Gameplay` | Gameplay loop, entity/component utilities, object lifecycle, spawning, pooling, commands, interaction/targeting, objectives/checkpoints. Composition root: `GameplayBootstrapper`. Sibling of `PlayerSystems` (Core/Runtime/Performance). |
 | `GameFramework.Performance` | Profiling markers/frame diagnostics, centralized tick system, memory diagnostics, resource-loading abstraction, mobile performance utilities, performance budgets. Composition root: `PerformanceBootstrapper`. Sibling of `PlayerSystems`/`Gameplay` (Core/Runtime only). |
-| `GameFramework.Progression` | Economy (multi-currency balances), Inventory (item ownership/quantities), Experience (levels/XP curves). Core/Runtime only. |
+| `GameFramework.Progression` | Economy (multi-currency balances), Inventory (item ownership/quantities), Experience (levels/XP curves), Statistics (Phase 7 — generic named counters). Core/Runtime only. |
 | `GameFramework.Unlocks` | Composable `IUnlockRequirement` (Level/Currency/Item/Prerequisite, AND/OR) + `IUnlockService`. References `GameFramework.Progression`. |
 | `GameFramework.Rewards` | `IReward` (Currency/Item/Experience/Unlock/Bundle) + `IRewardService` (idempotent claim). Composition root: `ProgressionBootstrapper`. References `GameFramework.Progression` + `.Unlocks`. |
-| `GameFramework.Editor` | Editor-only; localization table validation and Gameplay config validation (duplicate objective IDs, missing prefabs) menu items. |
+| `GameFramework.Quests` | Conditions (composable, statistic-driven), condition-backed Objectives, Quests, Achievements, threshold Milestones (Phase 7). Composition root: `QuestsBootstrapper` (extends `ProgressionBootstrapper`). References Progression/Unlocks/Rewards/Gameplay. |
+| `GameFramework.GameFlow` | Level-load/gameplay-session state machine (`LevelFlowState`), `GameplaySession`, session-scoped checkpoints/respawn, reference-counted pause tokens, restart/retry (Phase 8). Composition root: `GameFlowBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression` — references only Core/Runtime/Gameplay. |
+| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, and Quest content validation menu items. |
 | Matching `*.Tests` / `*.Tests.Runtime` assemblies | EditMode/PlayMode test coverage per system (see Testing below). |
 
 Full per-assembly reference tables and namespace listings live in
@@ -153,7 +179,8 @@ Full per-assembly reference tables and namespace listings live in
 - **Pooling** — `GameObjectPool` wraps Unity's built-in `UnityEngine.Pool.ObjectPool<T>` (2021.1+)
   rather than reimplementing a free-list; adds GameObject activation, an optional
   `IGameplayObjectLifecycle` hook per instance, max-size excess destruction, duplicate-release
-  detection, and transparent replacement of an externally-destroyed pooled instance.
+  detection, transparent replacement of an externally-destroyed pooled instance, foreign-object
+  release rejection, and a `PoolStatistics` snapshot (Phase 5 hardening).
 - **Commands** — `IGameplayCommand` (CanExecute/Execute) with a typed `CommandResult`
   (Success/Failure/Rejected), invoked via `GameplayCommandInvoker`; no undo/redo, no
   `Dictionary<string,object>` payload; an optional `GameplayCommandQueue` for the uncommon
@@ -161,10 +188,10 @@ Full per-assembly reference tables and namespace listings live in
 - **Interaction/Targeting** — `IInteractable` + a deliberately minimal `InteractionContext`;
   `TargetingUtility` provides non-allocating 3D/2D overlap queries, closest-target selection, and a
   cheap view-cone check. Not an AI targeting system; never references `GameFramework.Input`.
-- **Objectives/Checkpoints** — `ObjectiveBase` owns a generic
+- **Objectives/Checkpoints (Phase 4)** — `ObjectiveBase` owns a generic
   Inactive→Active→Completed/Failed→Inactive state machine and publishes events through the Phase 2
   `IEventService`; `Checkpoint`/`CheckpointData` are data-only (no auto-respawn, no second save
-  system). No concrete objective or progression layer is defined by the framework.
+  system). No concrete objective or progression layer is defined by this phase.
 - **Profiling** (`ProfileScope`, `IPerformanceMonitorService`) — categorized `ProfilerMarker`
   wrapper gated by `PerformanceSettings.Mode` (zero-cost when `Disabled`); rolling frame-time
   stats/spike detection/named budgets sampled via `IUpdatableService.Tick()`. An optional
@@ -175,9 +202,6 @@ Full per-assembly reference tables and namespace listings live in
   primitive, not a replacement for the Phase 4 gameplay loop. Allocation-free steady-state via a
   snapshot-before-invoke pattern (same technique as `IEventService.Publish`); safe to
   register/unregister mid-tick.
-- **Pooling Hardening** — `GameObjectPool` gained foreign/duplicate-release rejection (via O(1)
-  active-instance tracking), a `PoolStatistics` snapshot (get/release/miss/peak/total-created
-  counts), dispose-while-active warnings, and `ProfileScope`-wrapped `Get`/`Release`.
 - **Resource Management** (`IAssetProvider`/`ResourcesAssetProvider`) — reference-counted
   `Resources.Load`/`LoadAsync` wrapper returning release-owning handles; not Addressables (the
   project doesn't use it) and not a registered service (lifetime is caller-owned).
@@ -211,6 +235,48 @@ Full per-assembly reference tables and namespace listings live in
   `RewardService.TryClaim` calls `Grant()` on any of them, so an invalid reward never partially
   mutates player state. A persisted claimed-id set makes `RewardClaimPolicy.Once` idempotent by
   construction — repeated `TryClaim` calls after the first always return `AlreadyClaimed`.
+- **Statistics** (`IStatisticsService`, Phase 7) — mirrors `EconomyService`'s shape: constructor-
+  injected `StatisticDefinition[]`, explicit Save/Load with a dirty-flag-on-Shutdown policy.
+  Integer is the primary type (Get/Set/Increment/Decrement); Float/Boolean get focused accessors
+  only. `IsMonotonic` statistics reject decreases; `Persistent = false` statistics are session-only.
+- **Conditions** (`ICondition`, Phase 7) — composable, mirrors `IUnlockRequirement`'s shape but adds
+  progress reporting (`IProgressCondition`). `AllCondition`/`AnyCondition`/`NotCondition`;
+  `StatisticCondition` is the primary building block. Never polled — `ConditionStatisticIndex`
+  collects which statistics a condition tree depends on at registration time so only a relevant
+  `StatisticChangedEvent` re-evaluates it; non-statistic conditions fall back to their own broader
+  event (level/currency/item/unlock changed).
+- **Objectives/Quests/Achievements/Milestones** (Phase 7) — `ConditionObjective : ObjectiveBase`
+  extends Phase 4's bare state machine with a condition + progress. `IQuestService` composes
+  objectives + an optional availability condition + a completion rule (All/Any/Count) + a repeat
+  policy; `QuestStatus` is mostly derived, not persisted. `IAchievementService` is a simpler,
+  always-active single-condition case. `IMilestoneService` is the one place needing no
+  code-composed condition — always "statistic reaches threshold." All three claim rewards through
+  the existing `IRewardService` rather than tracking their own claimed flag.
+- **Game Flow / Level State Machine** (`IGameFlowService`, Phase 8) — one state machine
+  (`LevelFlowState`: Unloaded→Loading→Initializing→Ready→Playing⇄Paused→Completing/Failing→
+  Completed/Failed→Restarting→Exiting) covering both level-load lifecycle and gameplay-session
+  state. Scene-load completion is detected via `ISceneService.SceneLoaded` (not by polling
+  `AsyncOperation`, which can't be driven manually in tests). Every command returns a result
+  (`TransitionResult`/`LevelLoadResult`/`RespawnResult`) instead of throwing, and every command
+  wraps its transition *and* every event it publishes in one re-entrancy guard.
+- **Gameplay Sessions** (`GameplaySession`, Phase 8) — one active attempt: `SessionId`, `LevelId`,
+  `AttemptNumber`, `ElapsedGameplayTime` (accumulated only while Active), `PauseCount`,
+  `RespawnCount`, `Result`, and an owned `CheckpointSystem`. Mutation is internal — exactly one
+  session is ever active, enforced by construction. `Retry` always creates a new session; `Respawn`
+  is the one operation that continues the *same* attempt instead.
+- **Checkpoints/Respawn** (`CheckpointSystem`, Phase 8) — session-scoped registry
+  (Register/Activate/GetCurrent/Reset/Clear), composing with Phase 4's `Checkpoint` marker for
+  transform data plus an optional `IGameplaySnapshot` for game-defined extra state (never
+  inspected/persisted by the framework). `Respawn()` never leaves gameplay half-restored — it only
+  touches its own state when a valid checkpoint exists and publishes `PlayerRespawnedEvent` for a
+  game's own player controller to react to (GameFlow does not know what "the player" is). Only the
+  built-in transform is ever optionally persisted (`IGameFlowService.PersistCheckpoints`), never an
+  `IGameplaySnapshot`'s contents.
+- **Pause Tokens** (`IPauseToken`, Phase 8) — `PauseGameplay(reason)` returns a labeled token
+  wrapping exactly one `ITimeService.Pause()`/`Resume()` pair, so multiple independent owners (a
+  tutorial, a dialog) compose correctly without duplicating `ITimeService`'s existing
+  reference-counting. `LevelFlowState` reactively mirrors `ITimeService.IsPaused` every tick — the
+  same reactive-pause pattern `GameplayService` already established in Phase 4.
 
 Complete API examples, edge cases, and design rationale for every system are documented in
 `Assets/GameFramework/Documentation/Framework.md` — treat that file as the authoritative reference.
@@ -218,8 +284,8 @@ Complete API examples, edge cases, and design rationale for every system are doc
 ## Testing
 
 - EditMode tests cover pure logic via injected fakes (`IInputSampler`, `IRandomSource`,
-  `IHapticProvider`, fake `ITimeService`), so behavior is deterministic without a live device or
-  engine tick.
+  `IHapticProvider`, fake `ITimeService`/`ISceneService`), so behavior is deterministic without a
+  live device, a real scene load, or an engine tick.
 - PlayMode tests cover behavior that genuinely needs a running engine (real `AudioSource`
   playback/fades, `UIScreen`/`UIPopup` `AddComponent` + `Destroy`, full `GameBootstrapper.Awake`
   wiring of all services).
@@ -248,6 +314,21 @@ Complete API examples, edge cases, and design rationale for every system are doc
   (persisted unlocks/claims being silently dropped on load, since `RegisterUnlock`/`RegisterReward`
   necessarily run after `Load()`) was caught by the first real test run and fixed — see
   Framework.md's Testing section.
+- Phase 7: `GameFramework.Quests.Tests` (EditMode) reuses the Phase 6 `TestRegistryFactory`/
+  `TestDefinitions` pattern. Covers statistic increment/decrement/monotonic rejection/overflow
+  clamping, condition composition (including vacuous AND/OR identities), the objective lifecycle,
+  quest availability/completion rules/repeat policy/claim idempotency, achievement/milestone
+  completion+auto-claim, and cross-system integration flows (statistic → objective → quest;
+  statistic → achievement → reward; XP → level-up → unlock+achievement together;
+  quest-complete → save → simulated restart → load → still claimed).
+- Phase 8: `GameFramework.GameFlow.Tests` (EditMode) fakes both `ITimeService` and `ISceneService`
+  (a real `AsyncOperation` cannot be driven manually outside an actual engine scene load).
+  `LevelFlowStateMachineTests` covers the transition table directly. `GameFlowServiceTests` covers
+  load/ready/start, reactive pause/resume (including two independent pause-token owners),
+  complete/fail, respawn vs. retry, checkpoint persistence round-trips, a re-entrant command from
+  inside an event handler being blocked, and cancelling a load in progress. `IntegrationTests`
+  covers five named end-to-end flows. 48/48 Phase 8 tests pass; the full project suite (478
+  EditMode + 74 PlayMode tests) was re-run after this phase with zero regressions.
 
 ## Packages / Dependencies
 
@@ -263,10 +344,13 @@ Assets/GameFramework/
 ├── Runtime/            One folder + .asmdef per system (Core, Bootstrap, Services, Diagnostics,
 │                        State, SceneManagement, Time, Timers, Events, Persistence, Settings,
 │                        Input, Localization, Audio, Feedback, UI, PlayerSystems, Gameplay,
-│                        Performance, Progression, Unlocks, Rewards)
-├── Editor/              Editor-only tooling (Localization validator, Gameplay config validator)
+│                        Performance, Progression, Unlocks, Rewards, Quests, GameFlow)
+├── Editor/              Editor-only tooling (Localization, Gameplay config, and Quest content
+│                        validators)
 ├── Samples/              Phase0Demo/ … Phase4Demo/ (one per phase), Phase5Benchmark/,
-│                         Phase6Demo/ (with authored Content/ ScriptableObject assets)
+│                         Phase6Demo/, Phase7Demo/ (both with authored Content/ ScriptableObject
+│                         assets) — Phase 8 intentionally has no sample yet (see Framework.md's
+│                         Phase 8 section for why)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```
