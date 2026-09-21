@@ -22,6 +22,11 @@ namespace GameFramework.Performance.Profiling
         /// <summary>Phase 10's <c>GameFramework.Presentation</c> orchestration boundary (feedback
         /// dispatch, camera shake, screen effects) - distinct from <see cref="Audio"/>/<see cref="UI"/>,
         /// which already cover their own lower-level playback/rendering work.</summary>
-        Presentation
+        Presentation,
+
+        /// <summary>Phase 11's <c>GameFramework.Cameras</c> per-frame pose computation
+        /// (<c>CameraDriver.LateUpdate</c>) - distinct from <see cref="Presentation"/>, which covers
+        /// camera *feedback* (shake) layered on top of the base pose this category measures.</summary>
+        Cameras
     }
 }

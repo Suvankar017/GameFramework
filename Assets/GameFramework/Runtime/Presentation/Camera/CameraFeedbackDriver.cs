@@ -20,8 +20,18 @@ namespace GameFramework.Presentation
     /// specifically (not <c>Update</c>) is what lets this run after a same-frame camera-follow
     /// script, mirroring <see cref="Performance.Ticking.ILateTickable"/>'s own documented purpose
     /// without needing to register with that service at all.
+    ///
+    /// <c>[DefaultExecutionOrder(100)]</c> guarantees this runs after any default-order (0)
+    /// component, not only <c>Cameras.CameraDriver</c> (already earlier via its own
+    /// <c>[DefaultExecutionOrder(-100)]</c>) - specifically so it also composes correctly with
+    /// Cinemachine's <c>CinemachineBrain</c>, which writes this same transform in its own
+    /// default-order <c>LateUpdate</c> when a game uses Phase 11's Cinemachine integration instead
+    /// of <c>CameraDriver</c>. Whichever one owns the base pose this frame, this driver's own
+    /// subtract-previous-then-add-new offset pattern below reads it cleanly either way, with zero
+    /// compile-time reference to either.
     /// </summary>
     [DisallowMultipleComponent]
+    [DefaultExecutionOrder(100)]
     public sealed class CameraFeedbackDriver : MonoBehaviour, ICameraFeedbackDriver
     {
         private readonly CameraShakeState _shakeState = new CameraShakeState();

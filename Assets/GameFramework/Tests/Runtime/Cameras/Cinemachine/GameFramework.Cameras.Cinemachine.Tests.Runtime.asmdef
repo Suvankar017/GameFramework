@@ -1,0 +1,26 @@
+{
+    "name": "GameFramework.Cameras.Cinemachine.Tests.Runtime",
+    "rootNamespace": "GameFramework.Cameras.CinemachineIntegration.Tests",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Cameras",
+        "GameFramework.Cameras.Cinemachine",
+        "Cinemachine",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

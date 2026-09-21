@@ -56,3 +56,15 @@ using System.Runtime.CompilerServices;
 // in Play Mode - see PresentationServiceRuntimeTests's remarks.
 [assembly: InternalsVisibleTo("GameFramework.Presentation.Tests")]
 [assembly: InternalsVisibleTo("GameFramework.Presentation.Tests.Runtime")]
+
+// Phase 11 camera test assemblies reuse the same pattern to build a minimal, already-initialized
+// ServiceRegistry (a real EventService/SettingsService-over-InMemoryPersistenceStorage) for testing
+// CameraService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.Cameras.Tests")]
+[assembly: InternalsVisibleTo("GameFramework.Cameras.Tests.Runtime")]
+
+// Phase 11's Cinemachine integration test assemblies reuse the same pattern to build a minimal,
+// already-initialized ServiceRegistry (a real EventService) for testing CinemachineCameraBackend in
+// isolation.
+[assembly: InternalsVisibleTo("GameFramework.Cameras.Cinemachine.Tests")]
+[assembly: InternalsVisibleTo("GameFramework.Cameras.Cinemachine.Tests.Runtime")]

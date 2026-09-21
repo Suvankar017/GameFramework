@@ -5,7 +5,7 @@ tooling and target platforms.
 
 ## Status
 
-**Phase 10 — Game Feel, Feedback & Presentation Framework.** Phase 0 laid the structural foundation,
+**Phase 11 — Camera Framework.** Phase 0 laid the structural foundation,
 Phase 1 built Bootstrap/Services/Logging/GameState/SceneManagement, Phase 2 added the
 infrastructure layer (Time, Timers, Events, Persistence, Settings), Phase 3 added five reusable
 player-facing systems (Input, Localization, Audio, UI Foundation, Feedback/Haptics), Phase 4 added
@@ -53,9 +53,21 @@ existing UI layer roots, never a new Canvas), UI reactions (published as an even
 never `Pause`/`Resume`) — without gameplay code knowing how any single channel is implemented. See
 [Game Feel, Feedback & Presentation](#game-feel-feedback--presentation). It is explicitly not a
 replacement for Phase 3's `IFeedbackService`/`IAudioService` - it orchestrates them.
+Phase 11 adds a reusable camera orchestration layer on top of Core/Runtime/Performance only: one
+registered `ICameraService` owns camera registration/selection (base activation plus a temporary
+override stack, e.g. a Boss camera taking over and later releasing back to the gameplay camera), a
+small extensible `ICameraMode` strategy (Follow/Static/TargetLook/Manual) computes each registered
+`CameraController`'s pose entirely in pure, Unity-lifecycle-free C#, and exactly one `CameraDriver`
+per scene applies whichever camera is currently active to the real `UnityEngine.Camera` each
+`LateUpdate`. Gameplay never touches `Camera.main`/`transform.position`/`orthographicSize` directly —
+it expresses intent ("follow this target," "use this configuration," "temporarily use this camera")
+through the framework instead. See [Camera Framework](#camera-framework). It composes with Phase
+10's existing `Presentation.CameraFeedbackDriver` through script execution order alone
+(`[DefaultExecutionOrder(-100)]`) — zero compile-time coupling between the two assemblies in either
+direction, and no second camera-shake system.
 The framework still defines no concrete currencies, items, levels, rewards, quests, achievements,
-tutorial content, or feedback content for any specific game — no player character, enemy AI,
-weapons, economy backend, live ops, or IAP exists yet — see [Roadmap](#roadmap).
+tutorial content, feedback content, or camera content for any specific game — no player character,
+enemy AI, weapons, economy backend, live ops, or IAP exists yet — see [Roadmap](#roadmap).
 
 ## Target environment
 
@@ -186,6 +198,34 @@ Quests/Tutorials/Localization/Input at all - see
 channel reuse breakdown and why `GameFramework.Feedback` (Phase 3's existing haptics+audio-preset
 service) was not overloaded with this orchestration responsibility instead of adding a new assembly.
 
+`GameFramework.Cameras` (Phase 11) goes back to the *minimal* sibling shape (like Tutorials/GameFlow,
+not Presentation): it references only `GameFramework.Core`/`GameFramework.Runtime`/
+`GameFramework.Performance` — the last one solely for `ProfileScope`/`ProfilingCategory.Cameras`,
+mirroring exactly why `GameFramework.Gameplay` already references `GameFramework.Performance`. It
+deliberately has **no** reference to `GameFramework.Presentation` in either direction, even though
+Phase 11's base camera pose and Phase 10's camera shake visibly compose on the same `Transform` every
+frame. This works because `Presentation.CameraFeedbackDriver` was already written (Phase 10) to
+never assume *anything* about what wrote a camera's transform earlier in the frame — it just
+subtracts its own previous contribution and adds a new one (see that class's remarks) — so all
+`Cameras.CameraDriver` has to do is write the base pose *first*. `[DefaultExecutionOrder(-100)]` on
+`CameraDriver` guarantees that ordering deterministically against `CameraFeedbackDriver`'s own
+(default-order) `LateUpdate`, regardless of GameObject/component creation order, entirely through a
+Unity script-execution-order attribute — no assembly reference, no shared interface, no event. A game
+using both simply attaches both driver components to the same camera GameObject; a game using only
+one still works unmodified. See [Camera Framework](#camera-framework) for the full pipeline.
+
+`GameFramework.Cameras.Cinemachine` (Phase 11, added once Cinemachine 2.10.7 was installed in this
+project) is a **ninth, optional** assembly, one layer above `GameFramework.Cameras`: it references
+`GameFramework.Cameras` (one-way) plus the `Cinemachine` package, and is the *only* assembly in the
+entire framework that references Cinemachine at all. `GameFramework.Cameras` itself was **not**
+changed to depend on Cinemachine — every existing Phase 11 type (`ICameraService`, `CameraController`,
+`CameraDriver`, the built-in modes, bounds/zoom/transitions) is completely unaware this assembly
+exists, and a game without Cinemachine installed still gets the full Phase 11 feature set unmodified.
+This is a deliberate "backend swap," not a migration: a game picks *either* `Cameras.CameraDriver`
+(the pure-C# pipeline) *or* `CinemachineIntegration.CinemachineCameraBackend` (Cinemachine-backed) for
+a given scene's camera, against the exact same `ICameraService`/`CameraController` orchestration
+either way. See [Cinemachine Integration](#cinemachine-integration) for the full design.
+
 ## Folder structure
 
 ```text
@@ -255,10 +295,34 @@ Assets/GameFramework/
 │       │                          ApplicationLifecycleEvents.cs, ApplicationLifecycleDriver.cs,
 │       │                          IApplicationLifecycleService.cs, ApplicationLifecycleService.cs
 │       └── (root)                 PerformanceBootstrapper.cs
+│   └── Cameras/                    GameFramework.Cameras.asmdef (Phase 11)
+│       ├── AssemblyInfo.cs         InternalsVisibleTo for GameFramework.Cameras.Tests(.Runtime)
+│       ├── Modes/                  CameraDeadZone.cs, FollowCameraMode.cs, StaticCameraMode.cs,
+│       │                           TargetLookCameraMode.cs, ManualCameraMode.cs
+│       ├── Configuration/          CameraFollowSettings.cs, CameraTargetLookSettings.cs,
+│       │                           CameraZoomSettings.cs, CameraBoundsSettings.cs,
+│       │                           CameraTransitionSettings.cs, CameraConfiguration.cs
+│       └── (root)                  CameraId.cs, CameraPose.cs, ICameraTarget.cs,
+│                                    TransformCameraTarget.cs, ICameraMode.cs, CameraModeContext.cs,
+│                                    CameraModeKind.cs, CameraBoundsConstraint.cs,
+│                                    CameraZoomController.cs, CameraTransitionRunner.cs,
+│                                    CameraPoseController.cs, CameraEvents.cs,
+│                                    ICameraOverrideHandle.cs, CameraOverrideHandle.cs,
+│                                    CameraRuntimeState.cs, ICameraService.cs, CameraService.cs,
+│                                    CameraController.cs, CameraDriver.cs, CameraBootstrapper.cs
+│       └── Integration/
+│           └── Cinemachine/        GameFramework.Cameras.Cinemachine.asmdef (Phase 11, optional -
+│                                    only built if the Cinemachine package is installed)
+│               ├── AssemblyInfo.cs InternalsVisibleTo for .Cinemachine.Tests(.Runtime)
+│               └── (root)          CinemachineBoundsTranslator.cs, CinemachineCameraAdapter.cs,
+│                                    CinemachineCameraBackend.cs
 ├── Editor/
-│   ├── GameFramework.Editor.asmdef (Phase 3, extended Phase 4)
+│   ├── GameFramework.Editor.asmdef (Phase 3, extended Phase 4/10/11)
 │   ├── Localization/             LocalizationTableValidator.cs
-│   └── Gameplay/                 GameplayConfigValidator.cs (Phase 4)
+│   ├── Gameplay/                 GameplayConfigValidator.cs (Phase 4)
+│   ├── Cameras/                  CameraConfigurationValidator.cs (Phase 11)
+│   └── Cameras/Cinemachine/      GameFramework.Cameras.Cinemachine.Editor.asmdef (Phase 11, optional) -
+│                                  CinemachineCameraSetupValidator.cs
 ├── Tests/
 │   ├── Editor/                          GameFramework.Core.Tests.asmdef (EditMode)
 │   │   ├── Validation/ , Extensions/
@@ -273,6 +337,8 @@ Assets/GameFramework/
 │   │   │   ├── Entities/ , Lifecycle/ , Commands/ , Objectives/
 │   │   └── Performance/                 GameFramework.Performance.Tests.asmdef (EditMode, Phase 5)
 │   │       ├── Ticking/ , Profiling/
+│   │   └── Cameras/                     GameFramework.Cameras.Tests.asmdef (EditMode, Phase 11)
+│   │       └── Cinemachine/             GameFramework.Cameras.Cinemachine.Tests.asmdef (EditMode, optional)
 │   └── Runtime/                         GameFramework.Core.Tests.Runtime.asmdef (PlayMode)
 │       ├── Extensions/
 │       ├── Framework/                   GameFramework.Runtime.Tests.Runtime.asmdef (PlayMode)
@@ -280,8 +346,10 @@ Assets/GameFramework/
 │       ├── Audio/                       GameFramework.Audio.Tests.Runtime.asmdef (PlayMode)
 │       ├── UI/                          GameFramework.UI.Tests.Runtime.asmdef (PlayMode)
 │       ├── PlayerSystems/               GameFramework.PlayerSystems.Tests.Runtime.asmdef (PlayMode)
-│       └── Gameplay/                    GameFramework.Gameplay.Tests.Runtime.asmdef (PlayMode, Phase 4)
-│           ├── Pooling/ , Spawning/ , Interaction/    (Pooling/ also covers Phase 5 hardening)
+│       ├── Gameplay/                    GameFramework.Gameplay.Tests.Runtime.asmdef (PlayMode, Phase 4)
+│       │   ├── Pooling/ , Spawning/ , Interaction/    (Pooling/ also covers Phase 5 hardening)
+│       └── Cameras/                     GameFramework.Cameras.Tests.Runtime.asmdef (PlayMode, Phase 11)
+│           └── Cinemachine/             GameFramework.Cameras.Cinemachine.Tests.Runtime.asmdef (PlayMode, optional)
 └── Documentation/
     └── Framework.md                     (this file)
 ```
@@ -311,9 +379,12 @@ Assets/GameFramework/
 | `GameFramework.GameFlow` | `Runtime/GameFlow` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Gameplay` | Level-load/gameplay-session state machine, sessions, checkpoints/respawn, pause tokens, restart/retry (Phase 8). Composition root: `GameFlowBootstrapper`. |
 | `GameFramework.Tutorials` | `Runtime/Tutorials` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Input` (sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow` — no UI/Localization/Audio/Feedback/Gameplay/GameFlow/Progression/Unlocks/Rewards/Quests reference) | Tutorial lifecycle/state machine, sequential steps (Instruction/Wait/Input/Event/Condition), prerequisites/repeat/skip/persistence policies, optional gameplay pause and input-context gating (Phase 9). Composition root: `TutorialBootstrapper`. |
 | `GameFramework.Presentation` | `Runtime/Presentation` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Audio`, `GameFramework.Feedback`, `GameFramework.Gameplay`, `GameFramework.Performance`, `GameFramework.UI` (every dependency resolved *softly* at runtime — see [Architecture](#architecture)) | Coordinated feedback/presentation orchestration: `FeedbackDefinition` bundles Audio/Haptic/Camera/Visual/Screen/UI/Time channels behind one `IPresentationService.Play` call (Phase 10). Composition root: `PresentationBootstrapper`. |
-| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials`, `GameFramework.Presentation`, `GameFramework.Audio` | Editor-only. Localization table, Gameplay config, Quest content, Tutorial content, and Feedback content validation menu items. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` / `.Presentation.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
-| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` / `.Presentation.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here; Phase 10's visual-effect spawning, since `UnityEngine.Object.Destroy` is refused outside Play Mode). |
+| `GameFramework.Cameras` | `Runtime/Cameras` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance` (sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials` — no Input/UI/Audio/Feedback/Gameplay/Presentation reference either direction) | Camera orchestration: `ICameraService` (registration, base activation, override stack), `ICameraMode` (Follow/Static/TargetLook/Manual), world bounds, damped zoom, transitions (Phase 11). Composition root: `CameraBootstrapper`. |
+| `GameFramework.Cameras.Cinemachine` | `Runtime/Cameras/Integration/Cinemachine` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance`, `GameFramework.Cameras`, `Cinemachine` (the only assembly in the framework that references it) | Optional alternative driver for `ICameraService`/`CameraController`, backed by a real `CinemachineVirtualCamera`/`CinemachineBrain` instead of `CameraDriver`'s pure-C# pipeline (Phase 11). No composition root/service of its own — plain scene composition (`CinemachineCameraAdapter` + `CinemachineCameraBackend`). |
+| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials`, `GameFramework.Presentation`, `GameFramework.Audio`, `GameFramework.Cameras` | Editor-only. Localization table, Gameplay config, Quest content, Tutorial content, Feedback content, and Camera Configuration validation menu items. |
+| `GameFramework.Cameras.Cinemachine.Editor` | `Editor/Cameras/Cinemachine` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Cameras`, `GameFramework.Cameras.Cinemachine`, `Cinemachine` | Editor-only, separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. Validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend, duplicate controller ownership, an assigned Confiner with nothing to confine against). |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` / `.Presentation.Tests` / `.Cameras.Tests` / `.Cameras.Cinemachine.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` / `.Presentation.Tests.Runtime` / `.Cameras.Tests.Runtime` / `.Cameras.Cinemachine.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here; Phase 10's visual-effect spawning, since `UnityEngine.Object.Destroy` is refused outside Play Mode; Phase 11's `CameraDriver.LateUpdate` actually firing, since EditMode never runs the player loop; the Cinemachine integration's activation/target/zoom/confiner wiring against a real `CinemachineBrain`/`CinemachineVirtualCamera`). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
 Phase 3 is the opposite case: UI's dependency on Localization/Audio/Feedback (and Feedback's on
@@ -376,6 +447,15 @@ naming (`Progression`, `Unlocks`, `Rewards`, `GameFlow`, `Tutorials`) rather tha
 jargon. See [Architecture](#architecture) for why this one assembly's *reference* list is wider than
 every sibling before it, and every one of those references is still resolved softly at runtime.
 
+Phase 11 gets exactly one new assembly, `GameFramework.Cameras`, going back to the *minimal* sibling
+shape Phase 9/8 established rather than Phase 10's wide-orchestration one: its internal areas
+(Modes/Configuration, plus the root service/controller/driver types) share no dependency boundary
+worth enforcing against each other, so they stay namespaces within one assembly. It references only
+Core/Runtime/Performance (the last purely for `ProfileScope`); it has no reference on
+`GameFramework.Presentation` at all, in either direction — see [Architecture](#architecture) for how
+Phase 11's `CameraDriver` and Phase 10's `Presentation.CameraFeedbackDriver` still compose correctly
+on the same camera with zero assembly coupling, through `[DefaultExecutionOrder(-100)]` alone.
+
 ## Namespace conventions
 
 Block-style namespaces only, never file-scoped. Current namespaces:
@@ -417,11 +497,27 @@ Block-style namespaces only, never file-scoped. Current namespaces:
 - `GameFramework.GameFlow` — `LevelFlowState`, `TransitionResult`, `LevelFlowStateMachine` (internal), `LevelId`, `LevelDefinition`, `GameplayResult`/`GameplayResultKind`, `LevelLoadResult`, `RespawnResult`, `IGameFlowService`, `GameFlowService`, `GameFlowBootstrapper`, `IPauseToken`, and the `*Event` structs listed under [Game Flow, Sessions & Checkpoints](#game-flow-sessions--checkpoints).
 - `GameFramework.GameFlow.Session` — `SessionId`, `GameplaySession`, `GameplaySessionState`.
 - `GameFramework.GameFlow.Checkpoints` — `IGameplaySnapshot`, `CheckpointRecord`, `CheckpointSystem`.
+- `GameFramework.Cameras` — `CameraId`, `CameraPose`, `ICameraTarget`, `TransformCameraTarget` (its `Transform` getter added for the Cinemachine integration), `ICameraMode`, `CameraModeContext`, `CameraModeKind`, `CameraBoundsConstraint` (internal), `CameraZoomController` (internal), `CameraTransitionRunner` (internal), `CameraPoseController` (internal), `ICameraService`, `CameraService` (its `ReduceMotionSettingKey` made public for the same reason), `CameraController` (its `Target` getter added for the same reason), `CameraDriver`, `CameraBootstrapper`, `ICameraOverrideHandle`, `CameraOverrideHandle` (internal), `CameraRuntimeState`, and the `*Event` structs (`CameraRegisteredEvent`/`CameraUnregisteredEvent`/`ActiveCameraChangedEvent`/`CameraTargetChangedEvent`/`CameraOverridePushedEvent`/`CameraOverridePoppedEvent`/`CameraResetEvent`, the last one added for the Cinemachine integration - see [Cinemachine Integration](#cinemachine-integration)).
+- `GameFramework.Cameras.Modes` — `CameraDeadZone` (internal), `FollowCameraMode`/`StaticCameraMode`/`TargetLookCameraMode`/`ManualCameraMode` (all internal — built-in strategies behind the public `ICameraMode`, the same "internal implementation behind a public seam" shape `Presentation.CameraShakeState` already established).
+- `GameFramework.Cameras.Configuration` — `CameraFollowSettings`, `CameraTargetLookSettings`, `CameraZoomSettings`, `CameraBoundsSettings`, `CameraTransitionSettings`, `CameraConfiguration`.
+- `GameFramework.Editor.Cameras` — `CameraConfigurationValidator` (Editor-only).
+- `GameFramework.Cameras.CinemachineIntegration` — `CinemachineCameraAdapter`, `CinemachineCameraBackend`, `CinemachineBoundsTranslator` (internal). Optional (only present when the Cinemachine package is installed) - see [Cinemachine Integration](#cinemachine-integration) for why this namespace, not `GameFramework.Cameras.Cinemachine`, despite the *assembly* being named that.
+- `GameFramework.Editor.Cameras.CinemachineIntegration` — `CinemachineCameraSetupValidator` (Editor-only, optional).
 
 A naming note: `GameFramework.Runtime.Time` and `GameFramework.Runtime.Timers` share a word with
 `UnityEngine.Time`/nothing, respectively, but that hasn't caused the ambiguity you might expect —
 see [Bootstrap](#bootstrap)'s note on the one real collision Phase 1 hit (`Log` the class vs `Log`
-the method) for how that class of problem actually arises and gets fixed.
+the method) for how that class of problem actually arises and gets fixed. `GameFramework.Cameras`
+took a different fix for the same underlying risk: `Presentation.ICameraFeedbackDriver`'s own remarks
+already document that a nested `.Camera` namespace segment shadows `UnityEngine.Camera` for any bare
+`Camera` reference in that segment's own ancestor-namespace chain, which is why Presentation's camera
+files stay in a flat `GameFramework.Presentation` namespace despite living under a `Camera/` folder.
+Phase 11's entire job is manipulating `UnityEngine.Camera` — as a field type, `GetComponent<Camera>()`,
+etc. — in nearly every file, so fully qualifying `UnityEngine.Camera` everywhere (`Runtime.Time`'s own
+fix for its much smaller handful of `UnityEngine.Time.*` references) would be pervasive and easy to
+get wrong by omission. The assembly/namespace is `GameFramework.Cameras` (plural) instead — a
+different string entirely, so it is never found ahead of `UnityEngine.Camera` during simple-name
+lookup, with no qualification needed anywhere in the assembly.
 
 ## Bootstrap
 
@@ -2441,7 +2537,403 @@ engine, an animation framework, a dialogue/cutscene system, an audio-engine or h
 replacement, a UI-framework or input-framework replacement, a Time-system or pooling or
 resource-management replacement, and an analytics/ads/IAP SDK - `ICameraFeedbackDriver`/
 `IEventService`/`FeedbackDefinition`'s own extensibility are the seams a game's own presentation
-layer or a later phase would extend, not something this phase builds itself.
+layer or a later phase would extend, not something this phase builds itself. Phase 11 is that later
+phase - see [Camera Framework](#camera-framework) below.
+
+## Camera Framework
+
+Phase 11. One new assembly, `GameFramework.Cameras`, referencing only `GameFramework.Core`/
+`GameFramework.Runtime`/`GameFramework.Performance` - deliberately **not** Presentation, in either
+direction (see [Architecture](#architecture)). It is not a Cinemachine replacement or a full
+cinematic/cutscene system - see this section's own Non-goals.
+
+**Core principle.** Gameplay code never touches `Camera.main`/`transform.position`/`orthographicSize`
+directly - it expresses intent through the framework:
+
+```csharp
+ICameraService cameras = GameBootstrapper.Instance.Services.Get<ICameraService>();
+
+// Authored once, at composition-root/scene-setup time (usually via the Inspector - see
+// CameraController's own [SerializeField]s - shown here in code for clarity):
+CameraId gameplayId = cameras.RegisterCamera(gameplayCameraController, priority: 0, owner: "Gameplay");
+cameras.Activate(gameplayId);
+
+// "Follow this target":
+cameras.SetTarget(gameplayId, new TransformCameraTarget(player.transform));
+
+// "Temporarily use this camera", e.g. a boss encounter:
+ICameraOverrideHandle bossOverride = cameras.PushOverride(bossCameraId);
+// ... later, "return to the gameplay camera":
+bossOverride.Release();
+```
+
+**The pipeline** (CLAUDE.md's Phase 11 brief, section 3): Gameplay sets a `CameraController`'s target/
+mode/configuration -> `ICameraMode.ComputePose` (pure C#) produces a `CameraPose` (Camera State) ->
+`CameraZoomController` advances damped zoom -> `CameraBoundsConstraint` clamps the result -> exactly
+one `CameraDriver` per scene (the Camera Driver layer) applies whichever camera `ICameraService`
+currently resolves as active to the real `UnityEngine.Camera`/`Transform`. Every stage before
+`CameraDriver` is pure, Unity-lifecycle-free C# (mirrors `Presentation.CameraShakeState`/
+`ScreenEffectController`/`TimeFeedbackController`'s own "kept separate so it's EditMode-testable"
+reasoning), so the whole pose pipeline is unit-testable without a live Camera or scene.
+
+**`ICameraService`** is the one registered entry point (CLAUDE.md's Phase 11 brief, section 5) - the
+Phase 11 equivalent of `GameFlow.IGameFlowService`/`Presentation.IPresentationService`:
+
+- `RegisterCamera`/`UnregisterCamera` assign a stable `CameraId` (a process-unique monotonic counter,
+  the same shape as `Gameplay.Entities.EntityId` - never `UnityEngine.Object.GetInstanceID()`, per
+  CLAUDE.md section 42). Registering the same `CameraController` instance twice is idempotent and
+  returns the existing id.
+- `Activate(id)` sets the base (non-override) camera.
+- `PushOverride(id)` returns an `ICameraOverrideHandle` and makes `id` the active camera immediately,
+  regardless of priority - releasing the handle (`Release()`, safe to call more than once) removes it
+  from wherever it sits in the stack (not only the top), so nested overrides can be released out of
+  order without corrupting the stack (CLAUDE.md's Phase 11 brief, section 26). `ActiveCameraId` always
+  resolves to the top of the override stack, or the base camera if the stack is empty.
+- `SetTarget`/`ClearTarget`/`SetMode` forward to the named `CameraController`.
+- `ResetCamera(id)` snaps a controller's pose to its mode/target's current value immediately,
+  clearing any in-progress damping (restart/respawn/recovery, section 27).
+- `GetState(id)` returns a read-only `CameraRuntimeState` snapshot (active/override flags, target
+  presence, current pose) - development/UI diagnostic, never a live mutable reference.
+- Every command is safe against an unknown `CameraId` (returns `false`/`null`/a default value and
+  logs once, never throws) - the same "normal flow never needs a try/catch" policy
+  `GameFlow.IGameFlowService` already established.
+
+**Priority is informational only** (CLAUDE.md's Phase 11 brief, section 7's "predictable camera
+selection mechanism") - it is recorded at `RegisterCamera` for diagnostics (`GetState`), mirroring
+`Performance.Ticking.TickGroup`'s own "does not affect execution order by itself" precedent. Which
+camera is actually active is always the direct result of the last `Activate`/`PushOverride`/handle-
+`Release` call, never an implicit priority comparison, which keeps "what's live right now" fully
+predictable from the command history rather than needing to reason about priority ties.
+
+**`ICameraTarget`** is the lightweight target abstraction (section 9) - `Position`/`Rotation`/
+`IsValid`/`HasVelocity`/`Velocity`. `TransformCameraTarget` is the built-in adapter over a plain
+`Transform`; it deliberately reports `HasVelocity = false` rather than deriving one from per-frame
+position deltas (doing so correctly needs a per-frame sample call with no natural owner - a game that
+needs real velocity, e.g. for a look-ahead camera, implements `ICameraTarget` directly over its own
+Rigidbody/controller). A missing or destroyed target (`IsValid == false`) makes every built-in mode
+hold its previous pose unchanged rather than snapping to a default or throwing (section 35).
+
+**`ICameraMode`** is the extension point (section 8) - `CameraPose ComputePose(CameraModeContext,
+CameraPose previousPose, float deltaTime)`, pure and Unity-lifecycle-free by convention. Four built-in
+modes (all `internal` - authored via `CameraConfiguration.Mode`/`CreateMode()`, or a game supplies its
+own `ICameraMode` directly via `CameraController.SetMode`):
+
+- **Follow** - tracks a target subject to a per-axis follow mask (`Vector3 FollowAxisMask`; an axis
+  with mask 0 is never touched by this mode and stays exactly where this controller was last snapped
+  to - "fixed camera depth" is simply a Z mask of 0), `SmoothDamp` position damping, and an optional
+  dead zone/soft zone. The dead zone (`CameraDeadZone`, section 11) is evaluated relative to the
+  camera's *own current position*, not the target's absolute position: the target can move freely
+  within the zone; once it exits, the camera moves the minimum amount needed to keep the target at
+  the zone's edge (never snapping the target back to center). The optional soft zone (section 12)
+  eases the camera in gradually over an additional band beyond the dead zone before the same
+  full-catch-up rule applies further out.
+- **Static** - holds whatever pose this controller was last snapped to, regardless of any assigned
+  target. "Static" means placing the `CameraController`'s own GameObject at the desired position/
+  rotation in the scene (no target assigned) - not a position baked into the shared, reusable
+  `CameraConfiguration` asset, since position is scene-specific while mode/damping settings are
+  reusable across scenes.
+- **TargetLook** - position tracks the target at a configurable, damped offset; rotation stays
+  separately damped toward looking at the target (section 8's "track target position while
+  maintaining configurable camera positioning").
+- **Manual** - passes through whatever pose `CameraController.SetManualPose` last supplied, letting an
+  external system (a cutscene player, a custom rig) drive camera intent without ever touching
+  `Camera`/`Transform` directly (section 8's "provide camera intent without directly manipulating the
+  Unity camera").
+
+**Zoom** (`CameraZoomController`, sections 14-15) is damped and clamped independently of
+`ICameraMode`, so any mode can be zoomed - `orthographicSize` or `fieldOfView`, whichever the
+controller's own `Camera.orthographic` flag says (authored once per controller via the `_orthographic`
+Inspector field, since a `CameraController` does not require its own `Camera` component - see
+`CameraDriver`'s remarks - and therefore cannot read the flag off a live component at authoring time).
+
+**World bounds** (`CameraBoundsConstraint`, section 13) clamp the final position after the mode/zoom
+have run. Exact for an orthographic camera (subtracts half-width/half-height, computed from
+orthographic size and aspect, so the *view* - not just the center point - never leaves the bounds);
+for a perspective camera this clamps only the center position with no extent compensation, the
+"reliable subset" the brief explicitly allows for, since a perspective camera's view extent depends on
+distance-to-subject, which this framework assumes nothing about. Bounds narrower than the camera's own
+view on an axis center instead of producing an inverted clamp range (section 13's "edge cases").
+
+**Transitions** (`CameraTransitionRunner`, section 19) blend whenever `CameraDriver` detects the
+resolved active camera changed (activation, override push/pop) - one combined position+rotation+zoom
+blend (`CameraConfiguration.DefaultTransition`: a duration and an optional easing `AnimationCurve`),
+not three independently-timed ones; separate per-channel durations were not built since no concrete
+need for them was identified (a documented scope reduction, not an oversight - extend
+`CameraTransitionSettings` if a game genuinely needs it). Each frame it blends from the pose actually
+applied *last frame* toward the newly active controller's freshly computed pose, rather than a fixed
+start/end pair, so an interrupted or re-interrupted transition always blends from wherever the camera
+visually is right now (section 19's "interruptible, cancelable"). A zero (or unauthored) duration is
+an immediate cut, no blending overhead.
+
+**`CameraDriver`** is the one MonoBehaviour per scene that actually writes to a real `Camera`/
+`Transform` (attach it to the GameObject carrying the `Camera` component this scene renders through).
+Plain `LateUpdate`, not `Performance.Ticking.ITickService` - CLAUDE.md's own Tick Rules call for plain
+`Update`/`LateUpdate` for "anything simple, low-count, or already working," and a scene has exactly
+one active camera driver, the same reasoning `Presentation.CameraFeedbackDriver` already used for
+itself. `[DefaultExecutionOrder(-100)]` guarantees it runs before that driver's own (default-order)
+`LateUpdate` regardless of GameObject/component creation order, so `CameraFeedbackDriver` always reads
+this frame's freshly-written base pose before layering its own shake offset on top - see
+[Architecture](#architecture) for the full composition story, achieved with zero compile-time
+reference between the two assemblies.
+
+**`CameraController`** is the "Camera Target/Intent" authoring point (a MonoBehaviour) - it does
+**not** require its own `Camera` component; only the driver's GameObject needs one. This lets a
+"Boss camera" exist as a plain empty GameObject positioned at a vantage point, registered but not
+activated until needed, with no separate physical camera/`AudioListener`/culling-mask juggling (an
+explicit, deliberate scope reduction - see this section's Non-goals). `[SerializeField]`s expose
+`CameraConfiguration`, priority/owner (diagnostic), an initial target `Transform`, the `_orthographic`
+flag, aspect, and `_activateOnRegister` (default true, for the common single-camera-per-scene case;
+turn it off for a camera a game will `Activate`/`PushOverride` explicitly later). It self-registers
+with `ICameraService` in `OnEnable`/unregisters in `OnDisable`, the same pattern
+`Presentation.CameraFeedbackDriver` already established, polling for `GameBootstrapper.Instance`
+reaching `Ready` if `OnEnable` ran before Bootstrap did.
+
+**Initial pose.** A controller's very first pose is seeded from its own `transform.position`/
+`transform.rotation` - deliberately never from an assigned target's position, even though a target
+may already be assigned at `Awake`. Seeding from the target would corrupt any axis this controller
+does not follow (e.g. a fixed camera depth) with the target's unrelated value on that same axis; the
+followed axes then converge onto the target through the mode's own normal damping on the first real
+tick, which is a smooth (not instant) entrance by design. `ResetCamera`/`CameraController.Snap()`
+achieves an *instant* convergence instead by ticking once with `Camera.ReduceMotion` semantics forced
+on (zero damping) - reusing the same mode/zoom/bounds pipeline rather than reimplementing per-axis
+"snap to target" logic a second time, so it stays correct for every mode automatically (a Static-mode
+camera's `Snap()` correctly does nothing, since `StaticCameraMode.ComputePose` never reads the
+target).
+
+**Time integration** (section 21). A gameplay camera should freeze naturally while the game is paused -
+achieved for free, since `CameraDriver` defaults to `ITimeService.ScaledDeltaTime` (0 while
+`ITimeService.IsPaused`), exactly like `Presentation.CameraFeedbackDriver`'s own default. A menu/UI
+camera that must keep moving while gameplay is paused sets `CameraDriver`'s `_useUnscaledTime`
+Inspector flag instead. Never writes `Time.timeScale`/calls `Pause`/`Resume` directly.
+
+**Tick integration** (section 22). Deliberately plain `LateUpdate`, not
+`Performance.Ticking.ITickService` - see `CameraDriver`'s remarks above; `GameFramework.Cameras`
+references `GameFramework.Performance` only for `ProfilingCategory.Cameras`/`ProfileScope`, wrapped
+around `CameraDriver.LateUpdate`'s per-frame work (zero-cost when profiling is disabled, the same
+pattern every other framework boundary uses).
+
+**Game Flow integration** (section 23). No direct reference in either direction, matching Phase 10's
+own "communicate through events, not direct calls" principle - and largely not even needed here:
+gameplay pause is already handled for free by `ITimeService.ScaledDeltaTime` going to 0 (see Time
+integration above), which is the bulk of what section 23 asks for. A game's own bridge code (or
+nothing at all) turns a `GameFlow.PlayerRespawnedEvent`/`LevelRestartedEvent` into a
+`cameras.ResetCamera(id)`/`SetTarget(...)` call if it wants the camera to react to those specifically.
+
+**Settings integration** (sections 28-29). Built entirely on the existing `ISettingsService` - one
+new setting, `"Camera.ReduceMotion"` (bool, default off, category `"Camera"`), registered by
+`CameraService.Initialize` the same way `PresentationService` registers its own settings. When on,
+every built-in mode/zoom skips damping entirely (position/rotation/zoom still update correctly, just
+without the eased animation) rather than freezing camera movement outright - section 29's "must allow
+disabling or reducing camera motion without breaking gameplay camera positioning". Deliberately
+**not** a second camera-shake toggle: `"Presentation.Channel.Camera"` (Phase 10) already gates shake,
+a different, already-owned concern.
+
+**Editor tooling** (sections 32-33). `CameraConfigurationValidator` (`GameFramework.Editor.Cameras`)
+follows the same pattern as `FeedbackContentValidator`/`QuestContentValidator`: validate the selected
+`CameraConfiguration` asset (inverted zoom/bounds ranges, an all-zero follow axis mask, a negative
+soft-zone size). `CameraController.OnDrawGizmosSelected` (Editor-only, conditional-compiled) draws the
+dead zone/soft zone rectangles, world bounds, and a line to the current target - development-only
+visualization with no runtime cost, satisfying section 33 without a separate UI Toolkit debug window
+(not built - see Known Limitations).
+
+**Sample.** `Assets/GameFramework/Samples/Phase11Demo/` demonstrates a Player target moved by WASD/
+arrow keys, a Follow-mode gameplay camera (`Content/GameplayCameraConfig.asset` - dead zone, soft
+zone, world bounds, zoom range) tracking it, a "BossCameraPoint" (a plain GameObject with a
+`CameraController` in Static mode and no physical camera) pushed/popped as a temporary override, and a
+`Content/CameraShake.asset` `FeedbackDefinition` demonstrating Phase 10 camera-feedback composing on
+top - combining a small `Phase11DemoBootstrapper` (`ICameraService` + `IPresentationService`, no
+`PlayerSystemsBootstrapper` needed since the sample only exercises the Camera channel) with
+`Phase11DemoController`. Verified live in Play Mode (see Testing). Not part of the reusable framework.
+
+**Non-goals (explicitly not built).** Full Cinemachine replacement (see
+[Cinemachine Integration](#cinemachine-integration) for the actual, optional integration built
+instead), cinematic director/cutscene
+framework, Timeline replacement, physical multi-camera rendering/switching (culling
+masks/`AudioListener`/post-processing per camera), full split-screen framework, minimap framework,
+photo mode, replay camera system, a second tweening/interpolation engine (transitions reuse plain
+`Vector3.Lerp`/`Quaternion.Slerp`/`Mathf.SmoothDamp`), and per-channel (position/rotation/zoom)
+transition durations (a documented scope reduction - see Transitions above). `ICameraMode`/
+`ICameraTarget`'s own extensibility, plus `CameraTransitionSettings`, are the seams a game's own
+camera rig or a later phase would extend, not something this phase builds itself.
+
+## Cinemachine Integration
+
+Added within Phase 11 once Cinemachine 2.10.7 was installed in this project (`GameFramework.Cameras`
+itself predates it and was not written against it). One new, **optional** assembly,
+`GameFramework.Cameras.Cinemachine` (Editor tooling in a second optional assembly,
+`GameFramework.Cameras.Cinemachine.Editor`) - see [Architecture](#architecture) for the exact
+dependency boundary. Nothing above this integration needs to know it exists: gameplay code still
+only ever calls `ICameraService`/`CameraController` - the same API whether a given scene's camera is
+driven by `CameraDriver` (the pure-C# pipeline) or by this integration's
+`CinemachineCameraBackend`.
+
+**Core principle: Cinemachine owns camera *solving*; GameFramework owns camera *orchestration*.**
+Identity, registration, activation/priority policy, the override stack, target assignment, and
+lifecycle all stay exactly where Phase 11 already put them (`ICameraService`/`CameraController`,
+completely unmodified in responsibility). What changes is *who computes the camera's position,
+rotation, framing, and blend*: instead of `CameraPoseController`'s own `ICameraMode` → zoom → bounds
+pipeline, a real `CinemachineVirtualCamera`'s Follow/LookAt/Body/Aim components and
+`CinemachineBrain`'s blending do that work. This integration never re-implements what Cinemachine
+already does well - no custom dead zone/soft zone solver, no custom confiner, no custom blend
+engine - it only translates GameFramework's *decisions* (which camera is active, what its target is,
+what zoom value it wants) into the Cinemachine primitives that already solve those problems.
+
+**Two components, no new service.** Unlike every other phase, this integration registers nothing
+with `IServiceRegistry` - it is pure scene composition on top of the existing `ICameraService`:
+
+- **`CinemachineCameraAdapter`** (one per Cinemachine-backed camera) pairs one `CameraController`
+  with one `CinemachineVirtualCamera`. Attach it alongside both on a camera rig prefab/GameObject -
+  the same rig a Cinemachine-only project would already build, plus this one adapter.
+- **`CinemachineCameraBackend`** (exactly one per scene, the Cinemachine-backed sibling of
+  `CameraDriver` - attach alongside `CinemachineBrain` on the actual render `Camera` GameObject, use
+  one driver or the other per scene, never both for the same camera) reacts to
+  `ICameraService.ActiveCameraChanged` and maps the resolved active camera onto real Cinemachine
+  `Priority`. Adapters self-register with it (`Register`/`Unregister`, called from
+  `CinemachineCameraAdapter.OnEnable`/`OnDisable`) via an explicit `[SerializeField]` reference - the
+  same "prefer explicit registration, never scan the scene" principle `CameraController` already
+  follows with `ICameraService`. The registry is keyed by `CameraController` (never `CameraId`
+  directly): an adapter can `OnEnable` before its controller has finished binding to
+  `ICameraService` (and therefore before it has a valid `CameraId`), so a `CameraId` is always
+  resolved fresh, on demand, through the already-public `ICameraService.GetController`.
+
+**Activation → Priority, purely event-driven.** `CinemachineCameraBackend` never polls every frame
+for "did the active camera change" - it subscribes directly to
+`ICameraService.ActiveCameraChanged` (CLAUDE.md's own Tick Rules: "can this be event driven?").  On
+change, it demotes the previously-active adapter's vcam back to its authored
+`CinemachineCameraAdapter._basePriority` and boosts the newly-active one by a fixed
+`CinemachineCameraAdapter.ActivePriorityBoost` (1000) - large enough to outrank any other registered
+adapter's own base priority regardless of authored value, so activation is never ambiguous, and
+since exactly one adapter is ever boosted at a time (the previous one is demoted in the very same
+call), no priority tie is possible. `CameraController`'s own `Priority` field stays exactly what it
+already was - informational/diagnostic only (see `CameraService`'s remarks) - it is deliberately
+*not* reused as the real Cinemachine priority, so its existing "does not affect selection" contract
+for the non-Cinemachine path is never surprised by this integration. `CinemachineBrain` then performs
+the actual camera switch and blend entirely on its own - this integration never touches the Unity
+Camera's `transform` (CLAUDE.md's Phase 11 Cinemachine brief, Rule 5/39: never fight Cinemachine by
+writing the Camera transform directly while it owns that property).
+
+**Target mirroring.** `CinemachineCameraAdapter.ApplyTarget` reads `CameraController.Target` (a new,
+small, additive public getter - previously only readable indirectly via `HasTarget`) and, if it is a
+`TransformCameraTarget`, mirrors its wrapped `Transform` (also a new, small, additive public
+getter on `TransformCameraTarget` - previously private) onto the vcam's `Follow`/`LookAt`. Any other
+`ICameraTarget` implementation clears Follow/LookAt instead of guessing - Cinemachine needs a real
+`Transform`, and a game needing a non-Transform target on a Cinemachine-backed camera targets a proxy
+`Transform` it updates itself. Gameplay never touches the adapter for this - it keeps calling
+`ICameraService.SetTarget`/`CameraController.SetTargetTransform` exactly as before; the backend
+mirrors it automatically by subscribing to the existing `CameraTargetChangedEvent` (also re-applied
+once, immediately, whenever a camera newly becomes active, so a target assigned before activation is
+never missed).
+
+**Zoom stays a single call site.** Cinemachine has no time-based "damp this vcam's own lens toward a
+target value" concept - blending is only *between* vcams. Rather than inventing a second,
+Cinemachine-specific zoom API, gameplay keeps calling the exact same
+`CameraController.SetZoom(float)` it would for the non-Cinemachine path. Each frame,
+`CinemachineCameraBackend.LateUpdate` calls the *currently active* adapter's
+`CameraController.ComputePose` (already public, already damped via `CameraZoomController`, already
+`Camera.ReduceMotion`-aware since `CameraController` binds `ISettingsService` itself when it
+registers with `ICameraService`) and passes the result to `CinemachineCameraAdapter.ApplyZoom`,
+which writes only `OrthographicSize`/`FieldOfView` - whichever matches the vcam's own
+`m_Lens.Orthographic` - straight to the lens, discarding the position/rotation half of that same
+call (Cinemachine already owns those). This reuses the existing, tested `CameraPoseController`/
+`CameraZoomController` pipeline for the one channel Cinemachine does not solve, rather than
+duplicating SmoothDamp zoom logic a second time - `CameraConfiguration.Mode`'s position-related
+settings (Follow/TargetLook axis mask, dead zone, offset) are simply never consulted for a
+Cinemachine-backed camera, since its `_poseController` is never ticked for position by anything
+(only the zoom half of the same computation is read) - author `CinemachineVirtualCamera`'s own
+Body/Aim components for framing instead (see Prefab vs. Profile Responsibility below). On
+`ActiveCameraChanged` and on the new `CameraResetEvent` (published by `CameraService.ResetCamera`,
+alongside the existing `Controller.Snap()` call, purely additive), the backend also applies the
+zoom immediately (`ComputePose(0f)`/`CurrentPose`) rather than waiting for the next `LateUpdate`, so
+switching or resetting a camera never has a one-frame-stale lens value.
+
+**Bounds → Confiner2D, only when nothing is already authored.** `CinemachineCameraAdapter` accepts
+an optional `CinemachineConfiner2D` reference. If assigned and its `m_BoundingShape2D` is still
+unset, `Start()` translates the same `CameraConfiguration.Bounds` rect the non-Cinemachine path
+already reads (`CinemachineBoundsTranslator.TryComputeBoxBounds`, the one genuinely new piece of
+math this integration adds - pure and unit-tested) into a generated, disabled-trigger
+`BoxCollider2D` and assigns it, so Cinemachine performs the actual confinement math, not a
+GameFramework re-implementation (section 23 of the brief: "the smallest additional layer required").
+A prefab that already authors its own `m_BoundingShape2D` (any `Collider2D` shape, not only a box) is
+left completely untouched - the prefab stays authoritative (see Prefab vs. Profile Responsibility).
+
+**Transitions/blending are entirely `CinemachineBrain`'s.** `CameraTransitionRunner`/
+`CameraConfiguration.DefaultTransition` are specific to the non-Cinemachine `CameraDriver` path and
+are never consulted here. A Cinemachine-backed scene's blend policy is authored directly on
+`CinemachineBrain.m_DefaultBlend` (or per-camera-pair via its `m_CustomBlends` asset) - exactly
+"reuse existing Cinemachine Brain blend settings" rather than duplicating a second transition-duration
+concept (brief section 31). `CinemachineCameraBackend` exposes one small, optional convenience
+(`_overrideDefaultBlend` + `_defaultBlend`) that applies a `CinemachineBlendDefinition` to the Brain
+once at startup, purely so a scene's blend policy can be authored alongside the rest of this
+framework's camera setup instead of hunting for the Brain component separately - it never builds a
+competing blend engine.
+
+**Phase 10 composition needed zero code changes to `GameFramework.Presentation`.**
+`Presentation.CameraFeedbackDriver` was already written (Phase 10) to never assume anything about
+what wrote a camera's transform earlier in the frame - it subtracts its own previous contribution
+and adds a new one each `LateUpdate` (see that class's remarks), so it composes correctly on top of
+*either* `CameraDriver` or `CinemachineBrain`'s own transform write, with zero knowledge of which one
+is present. The only change `CameraFeedbackDriver` picked up for this integration is
+`[DefaultExecutionOrder(100)]` (previously unordered/default) - it now deterministically runs after
+*any* default-order component, not only `CameraDriver` (`-100`), so it also runs after
+`CinemachineBrain`'s own (default-order) `LateUpdate`. This was the one real gap: two default-order
+(`0`) components' relative `LateUpdate` order is otherwise unspecified/instantiation-order-dependent.
+Cinemachine Impulse (`CinemachineImpulseSource`/`CinemachineImpulseListener`) was deliberately **not**
+adopted - Phase 10 already owns camera feedback/shake completely, and building a second shake
+pipeline through Impulse would violate the brief's own Rule 4 ("Phase 10 owns camera feedback; Phase
+11 integrates it") for no behavioral gain, since the existing composition already works unmodified.
+
+**Editor validation.** `CinemachineCameraSetupValidator`
+(`GameFramework.Editor.Cameras.CinemachineIntegration`, menu item "GameFramework/Cameras/Validate
+Cinemachine Setup In Scene") follows the same modest, console-warning pattern as
+`CameraConfigurationValidator` rather than a new UI Toolkit window (brief section 47: "do not build a
+giant custom camera editor") - checks for a missing/duplicated `CinemachineCameraBackend` in the open
+scene, a missing `CinemachineBrain` on one, and per-adapter issues (missing Controller/Virtual
+Camera/Backend reference, two adapters sharing one `CameraController`, an assigned Confiner with
+nothing to confine against).
+
+**Prefab vs. Profile Responsibility.** Cinemachine-specific configuration (Follow/Aim component
+choice, dead zone/soft zone/damping values, lens near/far clip, the Confiner's actual bounding
+shape) belongs on the `CinemachineVirtualCamera` prefab, authored through Cinemachine's own
+inspector - this integration never duplicates that surface into a GameFramework
+`ScriptableObject`. `CameraConfiguration` keeps its existing, narrower role for a Cinemachine-backed
+camera: only `Zoom` (min/max/default/damping) and `Bounds` (the rect `CinemachineBoundsTranslator`
+reads) are actually consulted; `Mode`/`Follow`/`TargetLook`/`DefaultTransition` are simply unused for
+that camera (Cinemachine's own components replace them), matching brief section 26's "do not blindly
+duplicate every Cinemachine field into a ScriptableObject."
+
+**Namespace note.** The new runtime/editor assemblies use `GameFramework.Cameras.CinemachineIntegration`/
+`GameFramework.Editor.Cameras.CinemachineIntegration`, not `GameFramework.Cameras.Cinemachine` -
+deliberately avoiding the exact namespace-shadowing footgun this framework has hit before (a C#
+namespace segment matching a real package/engine namespace name shadows it for ancestor-namespace
+lookup purposes; here `GameFramework.Cameras.Cinemachine` as a literal namespace would shadow the
+real `Cinemachine` package namespace for any code nested under it, the same class of issue documented
+for `Input`/`Audio`/`UI` elsewhere in this codebase) - the *assembly* is still named
+`GameFramework.Cameras.Cinemachine` since assembly names don't participate in C# namespace lookup.
+
+**Sample.** `Assets/GameFramework/Samples/Phase11Demo/Phase11CinemachineDemo.unity` - a second,
+separate scene alongside the original `Phase11Demo.unity` (which still demonstrates the
+non-Cinemachine `CameraDriver` path unmodified) - mirrors the original demo's exact gameplay-facing
+calls (`Phase11CinemachineDemoController` never references a Cinemachine type) against a
+Cinemachine-backed setup: a `CinemachineVirtualCamera` with a `CinemachineFramingTransposer` (dead
+zone/damping) and a `CinemachineConfiner2D` (bounds generated from
+`Content/CinemachineGameplayCameraConfig.asset`) follows the Player, a fixed-vantage "EventCamera"
+vcam is pushed/popped as a temporary override with `CinemachineBrain` performing the actual blend,
+`CameraController.SetZoom` drives the vcam's lens, and the same `Content/CameraShake.asset` Phase 10
+feedback definition composes on top via a `Presentation.CameraFeedbackDriver` on the Main Camera.
+Verified live in Play Mode (see Testing) - through direct service/reflection calls via the Unity MCP
+`execute_code` tool, since Play Mode key-press simulation was not available through the tooling used
+for this verification, exactly like the original Phase11Demo's own verification.
+
+**Known limitations.** No `ICameraTargetGroup`/`CinemachineTargetGroup` wiring (brief section 35 -
+"only if needed"; a game wanting multi-target framing today assigns a `CinemachineTargetGroup`'s own
+`Transform` directly as a vcam's Follow target and uses `CinemachineGroupComposer`, which already
+composes with this integration with zero extra code, since target mirroring only ever needs a
+`Transform`). No per-camera-pair custom blend authoring UI (author `CinemachineBrain.m_CustomBlends`
+directly). No runtime vcam creation/destruction helpers (author camera rigs as prefabs/scene content,
+per brief section 29's "prefer authored camera prefabs for normal gameplay"). Perspective-camera
+bounds inherit the same "center-only, no extent compensation" caveat `CameraBoundsConstraint` already
+documents for the non-Cinemachine path - `CinemachineBoundsTranslator` only produces the bounding
+shape; Confiner2D's own extent handling is unaffected by this integration either way.
 
 ## Testing
 
@@ -2643,6 +3135,90 @@ layer or a later phase would extend, not something this phase builds itself.
   project-wide) was re-run after this phase with zero regressions, and the Phase10Demo sample's
   "HeavyImpact" definition (all six wired channels) and "Reward" definition, plus the master
   "Presentation.Enabled" toggle, were additionally verified live in Play Mode.
+- Phase 11: `GameFramework.Cameras.Tests` (EditMode) covers every pure-logic piece directly, kept
+  separate from any MonoBehaviour exactly like Phase 10's `CameraShakeState`/`ScreenEffectController`
+  pattern: `CameraDeadZoneTests` (inside the zone, exactly at its edge, beyond it with and without a
+  soft zone easing the transition), `FollowCameraModeTests`/`TargetLookCameraModeTests`/
+  `StaticCameraModeTests`/`ManualCameraModeTests` (missing/invalid target holding the previous pose,
+  a fixed axis genuinely never moving, dead-zone containment/exit, `Camera.ReduceMotion` bypassing a
+  heavily-damped configuration exactly), `CameraBoundsConstraintTests` (orthographic half-extent
+  clamp, perspective center-only clamp, bounds narrower than the camera's own view centering instead
+  of an inverted `Mathf.Clamp` range, the Z axis never touched), `CameraZoomControllerTests` (min/max
+  clamp, damped partial movement, `Snap` clearing velocity), `CameraTransitionRunnerTests` (immediate
+  zero-duration, mid-blend interpolation, full-elapsed convergence, `Cancel`), `CameraPoseControllerTests`
+  (mode→zoom→bounds composing correctly together, a target destroyed mid-follow holding the last pose
+  instead of throwing or resetting to zero, `Snap` converging position/zoom instantly while a
+  Static-mode `Snap` correctly never jumps to the target), and `CameraServiceTests` (duplicate
+  registration returning the same id, unregistering an unknown id being a no-op, activation firing
+  `ActiveCameraChangedEvent` only on an actual change, nested override push/pop restoring the correct
+  camera including out-of-order release, unregistering the currently active/overriding camera falling
+  back correctly, `GetState`'s active/override flags). `GameFramework.Cameras.Tests.Runtime`
+  (PlayMode) covers what genuinely needs a running engine - EditMode never runs the player loop, so
+  `CameraDriver.LateUpdate`/`CameraController.Awake`/`OnEnable`/`OnDisable` never fire there at all.
+  Reflection-injects `ICameraService` directly into `CameraDriver`/`CameraController`'s private
+  `_service` field (the same technique `Presentation.Tests.PresentationServiceRuntimeTests.SetId`
+  already uses for `FeedbackDefinition`'s private `_id` field) rather than spinning up a real
+  `GameBootstrapper` singleton per test. Covers a real `LateUpdate` applying position and damped
+  orthographic size to a real `Camera` component, the driver correctly following the resolved active
+  camera across an override push and pop (including the zero-duration-default immediate transition),
+  and `CameraController`'s real `Awake`-computed initial pose/`SetTargetTransform`/`ClearTarget`/`Snap`.
+- **A real bug this testing caught - not by a unit test, but by the first live Play Mode run of the
+  Phase11Demo sample:** the gameplay camera's Z depth silently jumped from its authored `-10` to `0`
+  the moment a target was assigned, because the controller's initial pose was seeded from the
+  target's own position whenever one was present (falling back to the controller's own `transform`
+  only when no target was assigned) - and the target (the Player) happened to sit at Z `0`. Since Z
+  was correctly configured as a *fixed* (non-followed) axis, `FollowCameraMode` then never touched it
+  again on any later tick, so the wrong seed value stuck permanently. This is exactly the class of bug
+  CLAUDE.md's workflow (Step 4 — Validate, "test relevant functionality") exists to catch before
+  calling a feature done: every one of the 66 EditMode/8 PlayMode unit tests already passed, because
+  none of them happened to combine "a target is assigned" with "an axis is deliberately not followed"
+  in the same case. Fixed by always seeding the initial pose from the controller's own
+  `transform.position`/`transform.rotation`, never from an assigned target (see [Camera Framework](#camera-framework)'s
+  "Initial pose" remarks for the corrected design, which also replaced the old externally-supplied-pose
+  `Snap(CameraPose)` with a `Snap()` that re-derives from the live mode/target through one
+  `Camera.ReduceMotion`-style tick instead, so the same class of hand-rolled-axis-logic bug cannot
+  recur in the reset path either) - two regression tests
+  (`CameraPoseControllerTests.Snap_StaticMode_HoldsCurrentPose_NeverJumpsToTarget` and the fixed-axis
+  assertion inside `FollowCameraModeTests`/`CameraControllerRuntimeTests`) now cover this directly.
+  67/67 Phase 11 EditMode tests and 8/8 PlayMode tests pass; the full project suite (684 EditMode + 84
+  PlayMode tests project-wide) was re-run after this phase with zero regressions, and the
+  Phase11Demo sample's Follow camera (dead zone/soft zone/world bounds/damped zoom, confirmed against
+  the exact expected clamped values), Boss camera override push/pop, and Phase 10 camera-shake
+  composing on top were additionally verified live in Play Mode - driven through direct service calls
+  via the Unity MCP `execute_code` tool rather than simulated key presses, since Play Mode input
+  simulation was not available through the tooling used for this verification pass.
+- **Phase 11's Cinemachine integration.** `GameFramework.Cameras.Cinemachine.Tests` (EditMode) covers
+  the one genuinely new piece of math this integration adds -
+  `CinemachineBoundsTranslator.TryComputeBoxBounds` (null/disabled/degenerate-width/degenerate-height
+  rect → `false`; a valid rect → the exact expected center/size). `GameFramework.Cameras.Cinemachine.Tests.Runtime`
+  (PlayMode) covers what genuinely needs a live Cinemachine pipeline, using the same
+  reflection-field-injection technique `CameraDriverRuntimeTests` already established (bypassing
+  `GameBootstrapper` entirely): activation boosting/restoring `CinemachineVirtualCamera.Priority`
+  across an active-camera switch, `CameraController.Target` mirroring onto Follow/LookAt,
+  `LateUpdate` writing `CameraController.ComputePose`'s zoom half to the vcam's lens and converging
+  toward a requested `SetZoom` value, and `Start()` generating a `BoxCollider2D` for an assigned
+  `CinemachineConfiner2D` with no shape already authored, sized exactly from the configured bounds
+  rect. 5/5 EditMode and 4/4 PlayMode tests pass; the full project suite (689 EditMode + 88 PlayMode
+  tests project-wide) was re-run after this integration with zero regressions.
+- **Live verification, Phase11CinemachineDemo sample.** Through the same `execute_code`-driven
+  approach (no Play Mode key-press simulation available): activating the gameplay camera correctly
+  boosted `CinemachineVirtualCamera.Priority` (base 10 → 1010) and mirrored the Player `Transform`
+  onto Follow/LookAt; `ICameraService.PushOverride`/handle `Release` correctly re-mapped priorities
+  in both directions and `CinemachineBrain.ActiveVirtualCamera` genuinely switched, with the real
+  `Main Camera` GameObject's `transform.position` observed actually arriving at the event camera's
+  authored vantage point `(20, 10, -10)` and blending back to `(0, 0, -10)` on release -
+  `CinemachineBrain` itself performing the transform write, never this framework's code;
+  `CameraController.SetZoom(9f)` was observed driving `Camera.orthographicSize` from its initial `5`
+  to `~9` through the real `Camera` component (`m_Lens.OrthographicSize` → Cinemachine → the render
+  `Camera`); `IPresentationService.Play` on the camera-shake `FeedbackDefinition` was observed
+  registering on `CameraFeedbackDriver.ActiveShakeCount` (confirming the request reached the driver)
+  and the transform returning to its exact pre-shake baseline once the shake's authored 0.35s
+  duration had elapsed, confirming Phase 10's non-destructive offset composition works correctly on
+  top of a Cinemachine-driven transform with the zero-code-change claim above; and `ResetCamera`
+  returned `true`. Zero console errors/warnings across the whole verification session (three
+  incidental "type is not a supported float value" warnings from the author's own ad hoc
+  `SerializedProperty` inspection script during this pass, unrelated to any product code, are not
+  counted here).
 
 ## Phase 0 — Core utilities
 
@@ -2735,8 +3311,33 @@ framework. Planned next:
 - **Phase 10** — Game Feel, Feedback & Presentation. Done — see
   [Game Feel, Feedback & Presentation](#game-feel-feedback--presentation). Explicitly out of scope
   and left for later (see that section's own "Non-goals"): a full camera framework/Cinemachine
-  replacement, a full post-processing or VFX/particle-system framework, a shader framework, a
-  tweening/animation framework, a dialogue/cutscene system, and an analytics/ads/IAP SDK -
-  `ICameraFeedbackDriver`/`IEventService`/`FeedbackDefinition`'s own extensibility are the seams a
-  game's own presentation layer or a later phase would extend, not something this phase builds
-  itself.
+  replacement (Phase 11's job, done - see below), a full post-processing or VFX/particle-system
+  framework, a shader framework, a tweening/animation framework, a dialogue/cutscene system, and an
+  analytics/ads/IAP SDK - `ICameraFeedbackDriver`/`IEventService`/`FeedbackDefinition`'s own
+  extensibility are the seams a game's own presentation layer or a later phase would extend, not
+  something this phase builds itself.
+- **Phase 11** — Camera Framework, with an optional Cinemachine integration. Done — see
+  [Camera Framework](#camera-framework) and [Cinemachine Integration](#cinemachine-integration) (the
+  latter added once Cinemachine was installed in this project, after the pure-C# pipeline already
+  existed). Explicitly out of scope and left for later (see both sections' own "Non-goals"/"Known
+  limitations"): a custom camera solver/blend engine (Cinemachine already provides one, now
+  integrated), cinematic director/cutscene framework, Timeline replacement, physical multi-camera
+  rendering/switching (culling masks/`AudioListener`/post-processing per camera), full split-screen
+  framework, minimap framework, photo mode, replay camera system, per-channel (position/rotation/zoom)
+  transition durations for the non-Cinemachine path, `ICameraTargetGroup`/`CinemachineTargetGroup`
+  wiring, and a custom blend-authoring UI - `ICameraMode`/`ICameraTarget`/`CameraTransitionSettings`
+  (non-Cinemachine path) and `CinemachineVirtualCamera`'s own Body/Aim components plus
+  `CinemachineBrain.m_CustomBlends` (Cinemachine path) are the seams a game's own camera rig or a
+  later phase would extend, not something this phase builds itself. No concrete camera content (a
+  specific game's authored `CameraConfiguration`/Cinemachine values, boss-fight sequencing, cutscene
+  cameras) exists for any specific game - [Sample](#camera-framework) exists for validation/
+  documentation only.
+
+Candidate next phases, based on the actual architecture after Phase 11 (none committed to yet):
+a UI navigation/menu-flow layer on top of Phase 3's UI Foundation (screen transitions, back-stack,
+focus management - `GameFramework.UI`'s own Non-goals already flag this gap); a save-slot/profile
+layer on top of Phase 2's `IPersistenceService` (multiple named save slots, not just one envelope per
+key); or a first concrete game built on top of everything through Phase 11, which would likely surface
+real integration gaps (e.g. an actual GameFlow<->Cameras bridge, a concrete `ICameraTarget` beyond
+`TransformCameraTarget`, or a genuine need for `CinemachineTargetGroup` wiring) faster than a
+twelfth infrastructure-only phase would.

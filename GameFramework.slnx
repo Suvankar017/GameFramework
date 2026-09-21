@@ -7,7 +7,9 @@
   <Project Path="GameFramework.Progression.csproj" />
   <Project Path="GameFramework.Unlocks.Tests.csproj" />
   <Project Path="GameFramework.Performance.csproj" />
+  <Project Path="GameFramework.Samples.Phase11Demo.csproj" />
   <Project Path="GameFramework.Tutorials.Tests.csproj" />
+  <Project Path="GameFramework.Cameras.Cinemachine.csproj" />
   <Project Path="GameFramework.Editor.csproj" />
   <Project Path="GameFramework.Presentation.Tests.csproj" />
   <Project Path="GameFramework.Runtime.Tests.csproj" />
@@ -15,12 +17,14 @@
   <Project Path="GameFramework.Tutorials.csproj" />
   <Project Path="GameFramework.Input.csproj" />
   <Project Path="GameFramework.Presentation.csproj" />
+  <Project Path="GameFramework.Cameras.csproj" />
   <Project Path="GameFramework.GameFlow.csproj" />
   <Project Path="GameFramework.Quests.csproj" />
   <Project Path="GameFramework.PlayerSystems.csproj" />
   <Project Path="GameFramework.Localization.csproj" />
   <Project Path="GameFramework.Audio.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.csproj" />
+  <Project Path="GameFramework.Cameras.Tests.csproj" />
   <Project Path="GameFramework.Audio.Tests.csproj" />
   <Project Path="GameFramework.Performance.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase2Demo.csproj" />
@@ -35,6 +39,7 @@
   <Project Path="GameFramework.Unlocks.csproj" />
   <Project Path="GameFramework.Core.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase9Demo.csproj" />
+  <Project Path="GameFramework.Cameras.Cinemachine.Editor.csproj" />
   <Project Path="GameFramework.PlayerSystems.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase10Demo.csproj" />
   <Project Path="GameFramework.Samples.Phase3Demo.csproj" />
@@ -46,7 +51,10 @@
   <Project Path="GameFramework.Core.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase7Demo.csproj" />
   <Project Path="GameFramework.Presentation.Tests.Runtime.csproj" />
+  <Project Path="GameFramework.Cameras.Tests.Runtime.csproj" />
+  <Project Path="GameFramework.Cameras.Cinemachine.Tests.csproj" />
   <Project Path="GameFramework.Audio.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase0Demo.csproj" />
+  <Project Path="GameFramework.Cameras.Cinemachine.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Localization.Tests.csproj" />
 </Solution>

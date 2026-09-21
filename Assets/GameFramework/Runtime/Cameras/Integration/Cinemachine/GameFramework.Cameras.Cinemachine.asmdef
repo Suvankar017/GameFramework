@@ -1,0 +1,20 @@
+{
+    "name": "GameFramework.Cameras.Cinemachine",
+    "rootNamespace": "GameFramework.Cameras.CinemachineIntegration",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Performance",
+        "GameFramework.Cameras",
+        "Cinemachine"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

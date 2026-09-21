@@ -1,0 +1,19 @@
+{
+    "name": "GameFramework.Samples.Phase11Demo",
+    "rootNamespace": "GameFramework.Samples.Phase11Demo",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Cameras",
+        "GameFramework.Presentation"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
