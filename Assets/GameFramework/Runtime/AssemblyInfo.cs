@@ -68,3 +68,8 @@ using System.Runtime.CompilerServices;
 // isolation.
 [assembly: InternalsVisibleTo("GameFramework.Cameras.Cinemachine.Tests")]
 [assembly: InternalsVisibleTo("GameFramework.Cameras.Cinemachine.Tests.Runtime")]
+
+// Phase 12 UI navigation test assembly reuses the same pattern to build a minimal,
+// already-initialized ServiceRegistry (a real UIService/EventService, fake IInputService/
+// IGameFlowService) for testing NavigationService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.UI.Navigation.Tests.Runtime")]

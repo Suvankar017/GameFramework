@@ -1,0 +1,20 @@
+{
+    "name": "GameFramework.Samples.Phase12Demo",
+    "rootNamespace": "GameFramework.Samples.Phase12Demo",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.UI",
+        "GameFramework.UI.Navigation",
+        "Unity.TextMeshPro"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

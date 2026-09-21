@@ -1901,3 +1901,90 @@ section is the stable rule summary; that one is the living reference.
   Profiler/`IPerformanceMonitorService` reading), **Estimated** (e.g. `GC.GetTotalMemory`, which is
   an estimate by definition), and **Configured** (a target frame rate/budget) — never present one as
   another.
+
+---
+
+# 78. Phase 12 UI Navigation & Menu Flow Infrastructure
+
+Phase 12 added `GameFramework.UI.Navigation` — UI navigation/menu-flow orchestration that sits above
+Phase 3's `GameFramework.UI` (screens, popups, layered canvases), not inside it. Full API examples
+and design rationale live in `Assets/GameFramework/Documentation/Framework.md`'s "UI Navigation &
+Menu Flow Framework" section — this section is the stable rule summary; that one is the living
+reference.
+
+## Navigation Architecture
+
+* `GameFramework.UI.Navigation` orchestrates Phase 3's screen/popup stack — it never instantiates,
+  parents, shows, hides, or destroys a screen/popup GameObject itself. Every mutation goes through
+  `IUIService.OpenScreen`/`OpenPopup`/`CloseScreen`/`ClosePopup`. Do not bypass `INavigationService`
+  to call `IUIService` directly once Navigation is registered — its own stack bookkeeping (parameters,
+  result callbacks, pause tokens) will desync from Phase 3's physical stack if you do.
+* A screen/popup opened through `INavigationService` must also be closed through it
+  (`NavigateBack`/`CloseTopPopup`), never through its own inherited `UIScreen.Close()`/`UIPopup.Close()`
+  shortcut — that shortcut talks to `IUIService` directly and leaves a ghost entry in Navigation's
+  stack.
+* `INavigationService` is registered by `NavigationBootstrapper`, which subclasses
+  `PlayerSystemsBootstrapper` directly (not `GameBootstrapper`) because it has a genuine hard
+  dependency on `IUIService` — the same reasoning `QuestsBootstrapper` subclasses
+  `ProgressionBootstrapper` for its own hard dependency on Rewards. Do not register
+  `INavigationService` from a bare `GameBootstrapper` subclass without `IUIService` already
+  registered — it will throw at `Initialize`.
+* `Input.IInputService` (Android/back-button routing) and `GameFlow.IGameFlowService` (popup pause
+  tokens) are resolved softly (`registry.TryGet`) — Navigation works fully without either registered,
+  it just skips that one piece. Register them *before* `INavigationService` if you want them honored.
+
+## Navigation Stack Rules
+
+* Use `Navigate` to push a new screen, `Replace` to swap the current one without keeping it in
+  history, and `Reset` to clear the whole stack and establish a new root (e.g. Main Menu -> Gameplay,
+  where back should never return to the menu). Do not simulate `Reset` by calling `NavigateBack` in a
+  loop — it doesn't invoke guards/results the same way and is not the intended API.
+* Every command returns a `NavigationResult` instead of throwing. Check `.Kind`/`.Success` rather
+  than assuming success — a duplicate/concurrent/blocked request is normal flow, not an exceptional
+  one.
+* A navigation command issued while `INavigationService.IsNavigating` is true is rejected
+  (`AlreadyActive`), including one issued synchronously from inside a lifecycle hook
+  (`OnOpened`/`OnHidden`/`OnShown`/`OnClosed`, or an `IUINavigationBackHandler` callback) that
+  Navigation itself just triggered — the same deliberate re-entrancy guard `GameFlowService`/
+  `TutorialService` already apply to their own event handlers. Defer such a follow-up call by one
+  frame (a coroutine) instead of calling back in directly.
+* Contexts are not a separate persisted stack per flow — Phase 3 destroys a closed screen's
+  GameObject, so there's no seam to keep a hidden context's screens alive to resume exactly as left.
+  Use `Reset` to move between top-level flows instead of inventing a context-switch mechanism.
+
+## Back Navigation Rules
+
+* Do not read `Input.GetKeyDown(KeyCode.Escape)` (or any other raw back-equivalent input) anywhere
+  outside `NavigationBackButtonDriver` — that is the one centralized place this framework reads a
+  physical back signal. Call `INavigationService.NavigateBack()` instead.
+* `NavigateBack` always tries, in order: an open popup, then the current screen's own
+  `IUINavigationBackHandler`, then a stack pop, then publishing `BackRequestedAtRootEvent`. Do not
+  hard-code back-button handling into an individual screen/popup that bypasses this chain.
+* This framework never calls `Application.Quit()` on your behalf, even when back-navigation reaches
+  the root with nothing left to pop — it only publishes `BackRequestedAtRootEvent`. Deciding what
+  "back at the root" means (confirm-exit popup, forward to GameFlow, quit) is a game decision.
+
+## Popup Rules
+
+* A popup's `NavigationRequestOptions.PausesGameplay` acquires a `GameFlow.IPauseToken` for exactly
+  as long as it's open and releases it automatically on close, by any path. Do not also call
+  `ITimeService.Pause`/`Resume` yourself for the same popup — that would double-pause/release
+  incorrectly against the reference count.
+* Popups stack independently of screens. Back-navigation always closes the topmost popup before
+  touching the screen stack at all, regardless of how many popups are open.
+
+## Parameters, Results, and Guards
+
+* `NavigationRequestOptions.Parameters`/`ResultCallback` are deliberately untyped (`object`) — the
+  call site is already type-safe (your own typed local is what gets boxed); the receiver
+  (`IUINavigationParameterReceiver.OnNavigationParameters`) does one explicit cast. Do not add a
+  generic `INavigationService.Navigate<T>` overload to "fix" this — it does not remove the cast on
+  the receiving end and adds API surface for no real safety gain.
+* A registered `INavigationGuard` runs for every screen/popup request, including back navigation.
+  `NavigationGuardResult.Defer` does not queue or retry the request — the guard itself is responsible
+  for calling the navigation method again once ready. Do not build a generic workflow/retry engine
+  around this; it is explicitly out of scope.
+* `IUINavigationTransitionHandler` is enter-only by design — Phase 3 destroys a closing screen/popup
+  synchronously, so there is no seam to defer that destruction for an exit animation. Play an exit
+  animation synchronously inside `UIScreen.OnClosed`/`OnHidden` instead of asking for an exit-transition
+  hook here.

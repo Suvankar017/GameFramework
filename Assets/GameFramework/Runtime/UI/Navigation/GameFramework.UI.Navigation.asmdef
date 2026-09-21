@@ -1,0 +1,21 @@
+{
+    "name": "GameFramework.UI.Navigation",
+    "rootNamespace": "GameFramework.UI.Navigation",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.UI",
+        "GameFramework.Input",
+        "GameFramework.GameFlow",
+        "GameFramework.PlayerSystems"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -226,6 +226,22 @@ This is a deliberate "backend swap," not a migration: a game picks *either* `Cam
 a given scene's camera, against the exact same `ICameraService`/`CameraController` orchestration
 either way. See [Cinemachine Integration](#cinemachine-integration) for the full design.
 
+`GameFramework.UI.Navigation` (Phase 12) breaks the *minimal* sibling shape deliberately, the same
+way `GameFramework.Presentation` did for a different reason: it references `GameFramework.UI` as a
+genuine **hard** dependency (it directly calls `IUIService.OpenScreen`/`OpenPopup`/`CloseScreen`/
+`ClosePopup` — orchestration, not an optional channel), plus `GameFramework.Input`/`GameFramework.GameFlow`
+as *soft* runtime dependencies (`registry.TryGet`, resolved for Android back-button routing and
+popup pause-token acquisition respectively — a game without either registered still gets full
+navigation, just without that one piece). Because the `IUIService` dependency is hard, its own
+composition root (`NavigationBootstrapper`) subclasses `PlayerSystemsBootstrapper` directly instead of
+sitting beside it as a plain `GameBootstrapper` sibling — the same reasoning `Quests.QuestsBootstrapper`
+already established for its own hard dependency on `Rewards`. The one change to an existing assembly
+this phase makes is additive and backward-compatible: `UI.IUIService.OpenScreen<T>`/`OpenPopup<T>`
+gained an optional `Action<T> onBeforeOpen = null` parameter (default `null`, so every existing call
+site is unaffected) — the one seam Navigation needed to deliver typed parameters to a screen/popup
+before its own `OnOpened` lifecycle hook fires, without Phase 3 needing to know Navigation exists.
+See [UI Navigation & Menu Flow Framework](#ui-navigation--menu-flow-framework) for the full design.
+
 ## Folder structure
 
 ```text
@@ -259,6 +275,10 @@ Assets/GameFramework/
 │   ├── Audio/                    GameFramework.Audio.asmdef (Phase 3)
 │   ├── Feedback/                 GameFramework.Feedback.asmdef (Phase 3)
 │   ├── UI/                       GameFramework.UI.asmdef (Phase 3)
+│   │   └── Navigation/           GameFramework.UI.Navigation.asmdef (Phase 12) - Ids, requests/
+│   │                             results, guards, transitions/back-handler hooks, the registries/
+│   │                             stack-entry types (internal), INavigationService/NavigationService,
+│   │                             NavigationBootstrapper, Catalog/ (UINavigationCatalog + entries)
 │   ├── PlayerSystems/            GameFramework.PlayerSystems.asmdef (Phase 3 composition root)
 │   └── Gameplay/                 GameFramework.Gameplay.asmdef (Phase 4)
 │       ├── Entities/             EntityId.cs, EntityIdentity.cs, ComponentLookup.cs
@@ -321,8 +341,9 @@ Assets/GameFramework/
 │   ├── Localization/             LocalizationTableValidator.cs
 │   ├── Gameplay/                 GameplayConfigValidator.cs (Phase 4)
 │   ├── Cameras/                  CameraConfigurationValidator.cs (Phase 11)
-│   └── Cameras/Cinemachine/      GameFramework.Cameras.Cinemachine.Editor.asmdef (Phase 11, optional) -
-│                                  CinemachineCameraSetupValidator.cs
+│   ├── Cameras/Cinemachine/      GameFramework.Cameras.Cinemachine.Editor.asmdef (Phase 11, optional) -
+│   │                              CinemachineCameraSetupValidator.cs
+│   └── UI/Navigation/            UINavigationCatalogValidator.cs (Phase 12)
 ├── Tests/
 │   ├── Editor/                          GameFramework.Core.Tests.asmdef (EditMode)
 │   │   ├── Validation/ , Extensions/
@@ -348,8 +369,10 @@ Assets/GameFramework/
 │       ├── PlayerSystems/               GameFramework.PlayerSystems.Tests.Runtime.asmdef (PlayMode)
 │       ├── Gameplay/                    GameFramework.Gameplay.Tests.Runtime.asmdef (PlayMode, Phase 4)
 │       │   ├── Pooling/ , Spawning/ , Interaction/    (Pooling/ also covers Phase 5 hardening)
-│       └── Cameras/                     GameFramework.Cameras.Tests.Runtime.asmdef (PlayMode, Phase 11)
-│           └── Cinemachine/             GameFramework.Cameras.Cinemachine.Tests.Runtime.asmdef (PlayMode, optional)
+│       ├── Cameras/                     GameFramework.Cameras.Tests.Runtime.asmdef (PlayMode, Phase 11)
+│       │   └── Cinemachine/             GameFramework.Cameras.Cinemachine.Tests.Runtime.asmdef (PlayMode, optional)
+│       └── UI/Navigation/               GameFramework.UI.Navigation.Tests.Runtime.asmdef (PlayMode, Phase 12 -
+│                                          no EditMode variant, same reason as GameFramework.UI.Tests)
 └── Documentation/
     └── Framework.md                     (this file)
 ```
@@ -383,8 +406,9 @@ Assets/GameFramework/
 | `GameFramework.Cameras.Cinemachine` | `Runtime/Cameras/Integration/Cinemachine` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance`, `GameFramework.Cameras`, `Cinemachine` (the only assembly in the framework that references it) | Optional alternative driver for `ICameraService`/`CameraController`, backed by a real `CinemachineVirtualCamera`/`CinemachineBrain` instead of `CameraDriver`'s pure-C# pipeline (Phase 11). No composition root/service of its own — plain scene composition (`CinemachineCameraAdapter` + `CinemachineCameraBackend`). |
 | `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials`, `GameFramework.Presentation`, `GameFramework.Audio`, `GameFramework.Cameras` | Editor-only. Localization table, Gameplay config, Quest content, Tutorial content, Feedback content, and Camera Configuration validation menu items. |
 | `GameFramework.Cameras.Cinemachine.Editor` | `Editor/Cameras/Cinemachine` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Cameras`, `GameFramework.Cameras.Cinemachine`, `Cinemachine` | Editor-only, separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. Validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend, duplicate controller ownership, an assigned Confiner with nothing to confine against). |
+| `GameFramework.UI.Navigation` | `Runtime/UI/Navigation` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.UI` (hard), `GameFramework.Input`, `GameFramework.GameFlow` (both soft, resolved via `registry.TryGet`), `GameFramework.PlayerSystems` (only for `NavigationBootstrapper` to subclass `PlayerSystemsBootstrapper`) | UI navigation/menu-flow orchestration on top of Phase 3's `IUIService`: stable-id screen/popup registration, a navigation stack independent of Unity's scene history, back-navigation priority, typed parameters/results, guards, and centralized Android/back-button routing (Phase 12). Composition root: `NavigationBootstrapper`. |
 | `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` / `.Presentation.Tests` / `.Cameras.Tests` / `.Cameras.Cinemachine.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
-| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` / `.Presentation.Tests.Runtime` / `.Cameras.Tests.Runtime` / `.Cameras.Cinemachine.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here; Phase 10's visual-effect spawning, since `UnityEngine.Object.Destroy` is refused outside Play Mode; Phase 11's `CameraDriver.LateUpdate` actually firing, since EditMode never runs the player loop; the Cinemachine integration's activation/target/zoom/confiner wiring against a real `CinemachineBrain`/`CinemachineVirtualCamera`). |
+| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` / `.Presentation.Tests.Runtime` / `.Cameras.Tests.Runtime` / `.Cameras.Cinemachine.Tests.Runtime` / `.UI.Navigation.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here; Phase 10's visual-effect spawning, since `UnityEngine.Object.Destroy` is refused outside Play Mode; Phase 11's `CameraDriver.LateUpdate` actually firing, since EditMode never runs the player loop; the Cinemachine integration's activation/target/zoom/confiner wiring against a real `CinemachineBrain`/`CinemachineVirtualCamera`; Phase 12's `NavigationService` orchestrating real `UIScreen`/`UIPopup` instances). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
 Phase 3 is the opposite case: UI's dependency on Localization/Audio/Feedback (and Feedback's on
@@ -456,6 +480,21 @@ Core/Runtime/Performance (the last purely for `ProfileScope`); it has no referen
 Phase 11's `CameraDriver` and Phase 10's `Presentation.CameraFeedbackDriver` still compose correctly
 on the same camera with zero assembly coupling, through `[DefaultExecutionOrder(-100)]` alone.
 
+Phase 12 gets exactly one new assembly, `GameFramework.UI.Navigation`, rather than the multi-assembly
+split (`.Navigation.Core`/`.Navigation.Runtime`/`.Navigation.Editor`) CLAUDE.md's Phase 12 brief
+floated as one possible shape — its internal areas (ids, requests/results, guards, the internal
+registries/stack-entry types, the catalog ScriptableObjects) share no dependency boundary worth
+enforcing against each other, the same reasoning behind every other phase's internal-namespace-vs-
+new-assembly decision above. Unlike Phase 9's/Phase 11's *minimal*-sibling shape, this one has a real
+**hard** reference on `GameFramework.UI` (it orchestrates Phase 3's screen/popup stack directly,
+never merely soft-looks-up an optional channel the way `Presentation` does its seven), which is also
+why its bootstrapper (`NavigationBootstrapper`) subclasses `PlayerSystemsBootstrapper` directly rather
+than sitting alongside it as a sibling `GameBootstrapper` subclass — the same reasoning
+`Quests.QuestsBootstrapper` already established for its own hard dependency on Rewards. Its editor
+tooling (`UINavigationCatalogValidator`) lives in the shared `GameFramework.Editor` assembly rather
+than a separate one, since (unlike the Cinemachine integration) it introduces no third-party package
+dependency that assembly needs to stay free of.
+
 ## Namespace conventions
 
 Block-style namespaces only, never file-scoped. Current namespaces:
@@ -503,6 +542,8 @@ Block-style namespaces only, never file-scoped. Current namespaces:
 - `GameFramework.Editor.Cameras` — `CameraConfigurationValidator` (Editor-only).
 - `GameFramework.Cameras.CinemachineIntegration` — `CinemachineCameraAdapter`, `CinemachineCameraBackend`, `CinemachineBoundsTranslator` (internal). Optional (only present when the Cinemachine package is installed) - see [Cinemachine Integration](#cinemachine-integration) for why this namespace, not `GameFramework.Cameras.Cinemachine`, despite the *assembly* being named that.
 - `GameFramework.Editor.Cameras.CinemachineIntegration` — `CinemachineCameraSetupValidator` (Editor-only, optional).
+- `GameFramework.UI.Navigation` — `UIScreenId`, `UIPopupId`, `NavigationMode`, `NavigationResultKind`, `NavigationResult`, `NavigationRequestOptions`, `IUINavigationParameterReceiver`, `IUINavigationBackHandler`, `IUINavigationTransitionHandler`, `INavigationGuard`, `NavigationGuardResult`, `NavigationGuardContext`, `INavigationService`, `NavigationService`, `NavigationBootstrapper`, `NavigationDiagnosticsSnapshot`, the `*Event` structs (`ScreenNavigatedEvent`/`PopupOpenedEvent`/`PopupClosedEvent`/`BackRequestedAtRootEvent`/`NavigationBlockedEvent`), `UIScreenRegistry`/`UIPopupRegistry`/`NavigationEntry`/`PopupEntry`/`NavigationCoroutineRunner`/`NavigationBackButtonDriver` (all internal), and `UINavigationCatalog`/`UINavigationScreenEntry`/`UINavigationPopupEntry` (optional ScriptableObject-based bulk registration).
+- `GameFramework.Editor.UI.Navigation` — `UINavigationCatalogValidator` (Editor-only).
 
 A naming note: `GameFramework.Runtime.Time` and `GameFramework.Runtime.Timers` share a word with
 `UnityEngine.Time`/nothing, respectively, but that hasn't caused the ambiguity you might expect —
@@ -3219,6 +3260,39 @@ shape; Confiner2D's own extent handling is unaffected by this integration either
   incidental "type is not a supported float value" warnings from the author's own ad hoc
   `SerializedProperty` inspection script during this pass, unrelated to any product code, are not
   counted here).
+- **Phase 12.** `GameFramework.UI.Navigation.Tests.Runtime` (PlayMode-only, no EditMode variant -
+  the same reason `GameFramework.UI.Tests` has none: test-double `UIScreen`/`UIPopup` subclasses are
+  MonoBehaviours, and `AddComponent` rejects a script compiled only for the Editor platform). Covers
+  registration (duplicate/invalid id, unknown screen/popup), push/replace/reset navigation (including
+  parameter delivery to `IUINavigationParameterReceiver` before `OnOpened`, and `ScreenNavigatedEvent`
+  publication), the full back-navigation priority chain (popup closes first, an
+  `IUINavigationBackHandler` consuming the request without a stack change, stack pop with a delivered
+  result, and `BackRequestedAtRootEvent` at the root), nested popup stacks (back closes the
+  topmost first, leaving the one beneath it open), `NavigationRequestOptions.PausesGameplay` acquiring
+  and releasing a `GameFlow.IPauseToken` via a fake `IGameFlowService`, `IsNavigating` correctly
+  blocking a concurrent request while an `IUINavigationTransitionHandler` enter-transition coroutine
+  is still playing and allowing one again once it completes, `INavigationGuard` Allow/Block/Defer
+  (including that it runs for back navigation too), and `RegisterEventMapping<TEvent>`/
+  `UnregisterEventMapping<TEvent>` (including parameter pass-through and duplicate-mapping rejection).
+  41/41 Phase 12 tests pass; the full project suite (689 EditMode + 129 PlayMode tests project-wide)
+  was re-run after this phase with zero regressions.
+- **Live verification, Phase12Demo sample.** Through the same `execute_code`-driven approach as
+  Phase 11 (no Play Mode key-press simulation available) - but this time invoking the sample's real
+  `Button.onClick` handlers rather than calling `INavigationService` directly, since the point was to
+  verify the actual click-driven UI flow: Main Menu's "Play" button pushed Character Selection;
+  selecting "Warrior" pushed Car Selection carrying that parameter (confirmed via the receiving
+  screen's private field); selecting "Sports Car" pushed Customization; Customization's "Done" button
+  first popped back to Car Selection synchronously, then - after the one-frame-deferred coroutine that
+  works around the reentrancy guard described in this section's "Concurrency policy" - popped Car
+  Selection too, delivering `"SportsCar"` to Character Selection's original result callback (confirmed
+  via the exact expected sequence of three `Debug.Log` lines). Separately: Main Menu's "Settings"
+  button opened the Settings popup; its "Exit Game" button opened a nested Confirm popup on top of it;
+  a first `NavigateBack()` closed only the Confirm popup, leaving Settings open and Main Menu
+  untouched (`CurrentScreenId` never changed); a second closed Settings, returning `HasOpenPopups` to
+  `false`. Separately again: calling `NavigateBack()` at the Main Menu root (no popups, single-screen
+  stack) returned `NavigationResultKind.NotFound` and was observed to actually publish
+  `BackRequestedAtRootEvent` (subscribed from the verification code itself). Zero console
+  errors/warnings across the whole verification session.
 
 ## Phase 0 — Core utilities
 
@@ -3248,6 +3322,174 @@ below for why.
 Only add an extension method when it is broadly reusable and does not hide an expensive or
 surprising operation behind an innocuous-looking call. Prefer a small number of well-justified
 extensions over many speculative ones.
+
+## UI Navigation & Menu Flow Framework
+
+Phase 12. One new assembly, `GameFramework.UI.Navigation`, referencing `GameFramework.Core`/
+`GameFramework.Runtime`/`GameFramework.UI` (hard - it orchestrates Phase 3's screen/popup stack
+directly) plus `GameFramework.Input`/`GameFramework.GameFlow` (soft, resolved via `registry.TryGet`)
+and `GameFramework.PlayerSystems` (only so its own `NavigationBootstrapper` can subclass
+`PlayerSystemsBootstrapper` - the same hard-dependency-bootstrapper pattern `Quests.QuestsBootstrapper`
+already established over `ProgressionBootstrapper`). It is not a second UI framework - Phase 3's
+`IUIService`/`UIScreen`/`UIPopup`/layered canvases are still the only thing that ever instantiates,
+parents, shows, hides, or destroys a screen/popup GameObject; this layer only decides *when* and
+*with what data*.
+
+**Core principle.** Game code never touches `IUIService.OpenScreen`/`OpenPopup`/`CloseScreen`
+directly once Navigation is registered - it expresses intent through stable ids instead:
+
+```csharp
+INavigationService navigation = GameBootstrapper.Instance.Services.Get<INavigationService>();
+
+// Authored once, at composition-root time:
+navigation.RegisterScreen(new UIScreenId("MainMenu"), mainMenuPrefab);
+navigation.RegisterPopup(new UIPopupId("Settings"), settingsPopupPrefab);
+
+// "Go to the character selection screen, remembering how to come back":
+navigation.Navigate(new UIScreenId("CharacterSelection"));
+
+// "Replace this screen, don't keep it in history":
+navigation.Replace(new UIScreenId("Results"));
+
+// "Start a new top-level flow; back should never return to the menu":
+navigation.Reset(new UIScreenId("Gameplay"));
+
+// "Go back" - implements the full popup -> screen-handler -> stack -> app priority chain itself:
+navigation.NavigateBack();
+```
+
+**The one seam added to Phase 3.** `UIScreen`/`UIPopup`'s own lifecycle (`OnOpened`/`OnHidden`/
+`OnShown`/`OnClosed`) had no way for a caller to inject data between instantiation and `OnOpened`
+firing. `IUIService.OpenScreen<T>`/`OpenPopup<T>` gained one small, additive, backward-compatible
+overload for this - `T OpenScreen<T>(T prefab, Action<T> onBeforeOpen = null)` - with `onBeforeOpen`
+defaulting to null so every existing call site is unaffected. `NavigationService` is the only caller
+that ever passes a non-null `onBeforeOpen`, using it to deliver `NavigationRequestOptions.Parameters`
+to a screen/popup implementing `IUINavigationParameterReceiver` before its own `OnOpened` runs. This
+is the "smallest architectural change" CLAUDE.md's Phase 12 brief (section 73) asks for when a
+feature genuinely doesn't fit the existing seams - everything else Navigation needs is built on top
+of `IUIService`'s existing public API.
+
+**`INavigationService`** is the one registered entry point - the Phase 12 equivalent of
+`GameFlow.IGameFlowService`/`Presentation.IPresentationService`/`Cameras.ICameraService`:
+
+- `RegisterScreen`/`UnregisterScreen`/`IsScreenRegistered` and the popup equivalents map a stable
+  `UIScreenId`/`UIPopupId` (the same string-backed-id shape as `GameFlow.LevelId`/`Presentation.FeedbackId`
+  - never `GetInstanceID()`, a GameObject name, or a stack position) to a prefab. Registering a
+  duplicate id throws `InvalidOperationException`; an invalid (empty) id throws `ArgumentException` -
+  both authoring/programmer errors caught once at startup, exactly like `IPresentationService.RegisterDefinition`.
+- `Navigate`/`Replace`/`Reset` push/replace/clear-and-root the screen stack (`NavigationMode`).
+  `NavigateBack` pops it, implementing the priority chain below. Every command returns a
+  `NavigationResult` (`Success`/`Blocked`/`Cancelled`/`Failed`/`AlreadyActive`/`NotFound`/`Deferred`)
+  instead of throwing - the same "normal flow never needs a try/catch" policy `IGameFlowService`
+  already established.
+- `OpenPopup`/`CloseTopPopup` manage a separate popup stack layered on top of whatever screen is
+  current. `CurrentScreen`/`CurrentScreenId`/`CurrentPopup`/`CurrentPopupId`/`CanNavigateBack`/
+  `HasOpenPopups` are always-current read properties.
+- `AddGuard`/`RemoveGuard` register an `INavigationGuard` (Allow/Block/Defer) evaluated, in
+  registration order, before every screen/popup navigation request including back navigation.
+- `RegisterEventMapping<TEvent>`/`UnregisterEventMapping<TEvent>` open a popup automatically when
+  `TEvent` is published through the existing `IEventService` - the same explicit, strongly-typed
+  mapping `IPresentationService.RegisterMapping<TEvent>` already established, applied here to
+  GameFlow-driven (or any event-driven) UI, e.g. a game-over popup reacting to
+  `GameFlow.GameplaySessionFailedEvent` without Navigation ever referencing Quests/Progression/
+  anything else that might also want to publish "show a popup" events.
+- `GetDiagnostics()` returns a `NavigationDiagnosticsSnapshot` (current screen, both stacks,
+  `IsNavigating`, registered counts) - a read-only development diagnostic, the same shape as
+  `Gameplay.Pooling.GameObjectPool.Statistics`, never something gameplay code should branch on.
+
+**Back-navigation priority** (CLAUDE.md's Phase 12 brief, section 11) is centralized in
+`NavigateBack` itself, never scattered per-screen:
+
+1. An open popup closes first (`CloseTopPopup`-equivalent, result `UIPopupResult.Cancelled`).
+2. Otherwise, if the current screen implements `IUINavigationBackHandler`, it gets first refusal -
+   returning `true` consumes the request with no stack change (e.g. a screen with its own internal
+   tabs/sub-panels that should close on the first back press).
+3. Otherwise, if more than one screen is on the stack, it pops one level.
+4. Otherwise (already at the root, nothing left to pop), `BackRequestedAtRootEvent` is published
+   through `IEventService` and `NavigateBack` returns `NavigationResultKind.NotFound` - a game
+   subscribes to decide what "back at the root" means (a confirm-exit popup, forwarding to
+   `IGameFlowService`, or `Application.Quit()`); this framework never assumes one, and never calls
+   `Application.Quit()` itself.
+
+**Android/mobile back button** (section 12) is centralized the same way input is everywhere else in
+this framework: `NavigationService` creates one internal `NavigationBackButtonDriver` (a plain
+`Update()`, matching CLAUDE.md's Tick Rules for "anything simple, low-count"), the only place in the
+whole framework that reads `Input.GetKeyDown(KeyCode.Escape)` - Unity's documented mapping for the
+Android hardware/gesture back button as well as the desktop Escape key, giving zero-setup Android
+back support. If `Input.IInputService` is registered, a logical action (default name `"Cancel"`, so
+a game can also bind a gamepad B button to it) is honored too; either source calls `NavigateBack()`,
+which implements the full chain above.
+
+**Concurrency policy** (section 21): a navigation command issued while `IsNavigating` is true is
+rejected outright (`NavigationResultKind.AlreadyActive`) - never queued, never silently cancelled.
+`IsNavigating` stays true for the duration of an `IUINavigationTransitionHandler.PlayEnterTransition`
+coroutine, if the newly-entered screen/popup implements one (section 22-23) - this is what blocks a
+second navigation request from interrupting a transition mid-flight, and is also why a navigation
+call made *synchronously from inside a lifecycle hook this service itself just triggered*
+(`OnShown`/`OnOpened`/`OnClosed`/`OnHidden`, or an `IUINavigationBackHandler` callback) is rejected
+the same way - `IsNavigating` is still true for the whole outer call. This is the same deliberate
+re-entrancy guard `GameFlow.GameFlowService`/`Tutorials.TutorialService` already apply to a command
+issued from inside one of their own event handlers; defer such a follow-up call by one frame (a
+coroutine) instead - see the Phase12Demo sample's `CarSelectionScreen` for a worked example (selecting
+a car, finishing customization, and returning the chosen car as a result to the screen two levels up
+the stack).
+
+`IUINavigationTransitionHandler` is deliberately **enter-only** - Phase 3's `UIScreen`/`UIPopup`
+destroy their GameObject synchronously the instant `IUIService.CloseScreen`/`ClosePopup` is called,
+with no seam for this layer to defer that destruction, so an "exit transition" hook could never
+actually finish playing before the object it animates is destroyed. A screen wanting a guaranteed
+pre-destroy exit animation plays it synchronously inside its own `OnClosed`/`OnHidden` override
+(Phase 3's existing hooks) instead. Navigation never depends on a tweening library either way -
+without a transition handler, a push/pop is instant, exactly as Phase 3 already behaves.
+
+**Parameters and results** (sections 19-20) are deliberately untyped (`object`) at the
+`NavigationRequestOptions`/`IUINavigationParameterReceiver` boundary rather than a generic
+`INavigationService` surface - the call site is already type-safe (the caller's own typed local is
+what gets boxed), and the receiver does one explicit cast for the type it expects. A screen/popup
+that wants to hand a value back to whoever navigated to it supplies `ResultCallback` at push time;
+that callback fires exactly once, whenever the pushed entry (or, via a game's own deliberate chained
+`NavigateBack` calls, an entry further down the stack) is eventually popped/closed, receiving
+whatever `object result` that specific pop/close call supplied.
+
+**Contexts** (section 15) were deliberately *not* implemented as independently-persisted stacks per
+flow (Main Menu vs. Gameplay vs. Results each keeping their own resumable history). Phase 3's
+`UIScreen` destroys its GameObject on close, so there is no existing seam to keep a hidden context's
+screens alive to return to exactly as left without either duplicating Phase 3's lifecycle or
+silently losing screen state anyway - and CLAUDE.md's own guidance ("do not introduce contexts merely
+for abstraction... use them when they solve real lifecycle/navigation problems") argues against
+building a facade that doesn't actually deliver persistence. `Reset` covers the real use case
+instead: moving between top-level flows (Main Menu -> Gameplay) where back should never return to
+the previous one - the same outcome, achieved with the lifecycle Phase 3 already guarantees.
+
+**Pause/GameFlow integration** (section 26): `NavigationRequestOptions.PausesGameplay` on a popup
+open acquires a `GameFlow.IPauseToken` via `IGameFlowService.PauseGameplay` (a no-op, logged once,
+if `IGameFlowService` isn't registered - the same soft-dependency degradation `IPresentationService`
+already established for its own channels) and releases it automatically when the popup closes, by
+any path (`CloseTopPopup`, back navigation, or `Shutdown`). Navigation never touches
+`Runtime.Time.ITimeService`/`Time.timeScale` directly.
+
+**Known limitations / non-goals** (mirrors every other phase's "what this deliberately does not do"):
+no visual transition/tweening engine (enter-transition hook only, see above); no persisted
+navigation state (section 40 - a navigation stack, open popup, or screen parameter is never written
+to `Runtime.Persistence.IPersistenceService`; Phase 13 owns save profiles); no generic workflow/queue
+engine behind `NavigationGuardResult.Defer` (the guard itself is responsible for retrying); no focus/
+gamepad-navigation system beyond what Phase 3's own `EventSystem` already provides (this framework
+targets touch-first mobile UI, per CLAUDE.md's Phase 12 brief, section 24); and no second scene-loading
+system - `Runtime.SceneManagement.ISceneService` already exists and is untouched, and Navigation's own
+state naturally survives a scene load for free since `UIService`'s canvas root (and therefore every
+screen/popup instantiated under it) is already `DontDestroyOnLoad`.
+
+**Sample.** `Assets/GameFramework/Samples/Phase12Demo/` demonstrates: `Reset` establishing a Main
+Menu root; `Navigate` with parameters through a Character Selection -> Car Selection -> Customization
+chain; a chained multi-level `NavigateBack` returning a typed result two levels up the stack (with
+the reentrancy sharp edge above worked around via a one-frame-deferred coroutine); a modal Settings
+popup opening a nested Confirm popup, with back-navigation closing the topmost popup first and
+leaving the one beneath it open; and `BackRequestedAtRootEvent` firing once nothing is left to pop.
+Live-verified in Play Mode by invoking the sample's real `Button.onClick` handlers (not raw
+`INavigationService` calls) through the Unity MCP `execute_code` tool, since Play Mode key-press
+simulation is not available through that tooling (the same limitation Phase 11's own live
+verification notes) - every step above was observed to produce the expected `CurrentScreenId`/
+`CurrentPopupId`/`CanNavigateBack` state and console log after each click.
 
 ## Roadmap
 
@@ -3333,11 +3575,20 @@ framework. Planned next:
   cameras) exists for any specific game - [Sample](#camera-framework) exists for validation/
   documentation only.
 
-Candidate next phases, based on the actual architecture after Phase 11 (none committed to yet):
-a UI navigation/menu-flow layer on top of Phase 3's UI Foundation (screen transitions, back-stack,
-focus management - `GameFramework.UI`'s own Non-goals already flag this gap); a save-slot/profile
-layer on top of Phase 2's `IPersistenceService` (multiple named save slots, not just one envelope per
-key); or a first concrete game built on top of everything through Phase 11, which would likely surface
-real integration gaps (e.g. an actual GameFlow<->Cameras bridge, a concrete `ICameraTarget` beyond
-`TransformCameraTarget`, or a genuine need for `CinemachineTargetGroup` wiring) faster than a
-twelfth infrastructure-only phase would.
+- **Phase 12** — UI Navigation & Menu Flow Framework. Done — see
+  [UI Navigation & Menu Flow Framework](#ui-navigation--menu-flow-framework). Explicitly out of
+  scope and left for later (see that section's own "Known limitations / non-goals"): a visual
+  transition/tweening engine, persisted navigation state, a generic workflow/queue engine behind
+  guard deferral, a gamepad-focus navigation system beyond Phase 3's own `EventSystem`, and a second
+  scene-loading system — `IUINavigationTransitionHandler`/`INavigationGuard`/`RegisterEventMapping`
+  are the seams a game's own presentation layer or a later phase would extend, not something this
+  phase builds itself.
+
+Candidate next phases, based on the actual architecture after Phase 12 (none committed to yet):
+a save-slot/profile layer on top of Phase 2's `IPersistenceService` (multiple named save slots, not
+just one envelope per key, and the natural place to persist "last screen"/"tutorial completed"/etc.
+if a game ever wants that); or a first concrete game built on top of everything through Phase 12,
+which would likely surface real integration gaps (e.g. an actual GameFlow<->Navigation bridge beyond
+plain event mappings, a concrete need for `NavigationGuardResult.Defer` retry semantics, or a genuine
+need for gamepad/keyboard UI focus navigation) faster than a thirteenth infrastructure-only phase
+would.

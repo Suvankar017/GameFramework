@@ -1,0 +1,28 @@
+{
+    "name": "GameFramework.UI.Navigation.Tests.Runtime",
+    "rootNamespace": "GameFramework.UI.Navigation.Tests",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.UI",
+        "GameFramework.UI.Navigation",
+        "GameFramework.Input",
+        "GameFramework.GameFlow",
+        "GameFramework.Gameplay",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

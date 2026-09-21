@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 11 — Camera Framework, with an optional Cinemachine integration**, on top of:
+**Phase 12 — UI Navigation & Menu Flow Framework**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -61,6 +61,16 @@ that most games need, without any game-specific content.
     framing/dead-zone, confinement, and blending instead of `CameraDriver`'s own pure-C# pipeline -
     see Framework.md's "Cinemachine Integration" section for the full design and which of the two
     drivers owns what.
+- **Phase 12** — a reusable UI navigation/menu-flow orchestration layer on top of Phase 3's UI
+  Foundation: one registered `INavigationService` owns stable-id screen/popup registration, a
+  navigation stack independent of Unity's own scene history (`Navigate`/`Replace`/`Reset`/
+  `NavigateBack`), a centralized back-navigation priority chain (open popup → a screen's own
+  `IUINavigationBackHandler` → the stack → `BackRequestedAtRootEvent` for the game/GameFlow/app to
+  decide), typed parameters/results delivered through the one small additive seam added to
+  `IUIService.OpenScreen`/`OpenPopup` (an optional `onBeforeOpen` callback), `INavigationGuard`s,
+  optional enter-transition coroutine hooks, and centralized Android/back-button routing. It never
+  duplicates Phase 3's screen/popup instantiation, destruction, or layered-canvas machinery - every
+  screen/popup it manages is still opened/closed exclusively through `IUIService`.
 
 No player character, enemy AI, weapons, ads, analytics, IAP, remote config, or multiplayer exists
 yet, and no concrete currency/item/level/unlock/reward/quest/achievement/tutorial-content/feedback-
@@ -156,6 +166,19 @@ exactly as before for a game that doesn't have the package installed. `CameraFee
 up one small, backward-compatible change for this integration: `[DefaultExecutionOrder(100)]`, so it
 also runs after `CinemachineBrain`'s own (default-order) transform write, not only after
 `CameraDriver`'s - it still needs no reference to Cinemachine or to the new assembly to do so.
+`GameFramework.UI.Navigation` (Phase 12) breaks the minimal-sibling pattern deliberately, the same
+way Presentation did: it references `GameFramework.UI` as a genuine **hard** dependency (it
+orchestrates Phase 3's screen/popup stack directly via `IUIService.OpenScreen`/`OpenPopup`/
+`CloseScreen`/`ClosePopup`, never merely soft-looks-up an optional channel), plus
+`GameFramework.Input`/`GameFramework.GameFlow` as *soft* runtime dependencies (`registry.TryGet`,
+for Android back-button routing and popup pause-token acquisition respectively) and
+`GameFramework.PlayerSystems` so its own `NavigationBootstrapper` can subclass
+`PlayerSystemsBootstrapper` directly - the same reasoning `Quests.QuestsBootstrapper` already
+established for its own hard dependency on Rewards. The only change to an existing assembly this
+phase makes is additive/backward-compatible: `UI.IUIService.OpenScreen<T>`/`OpenPopup<T>` gained an
+optional `Action<T> onBeforeOpen = null` parameter (default null, every existing call site
+unaffected) - the one seam Navigation needed to deliver typed parameters to a screen/popup before its
+own `OnOpened` lifecycle hook fires.
 
 Everything is wired together by `GameBootstrapper`, which registers and initializes services in a
 load-bearing order: Logging → GameState → Scene → Time → Timer → Event → Persistence → Settings,
@@ -171,8 +194,11 @@ combined subclass, registered after `IGameplayService` so its soft lookup succee
 `IGameFlowService`, (via `TutorialBootstrapper`, or a game's own combined subclass, registered
 after `IInputService` so its soft lookup succeeds) `ITutorialService`, (via
 `PresentationBootstrapper`, or a game's own combined subclass, registered after whichever of Audio/
-Feedback/Gameplay/Performance/UI are wanted so its soft lookups succeed) `IPresentationService`, and
-(via `CameraBootstrapper`, or a game's own combined subclass) `ICameraService`.
+Feedback/Gameplay/Performance/UI are wanted so its soft lookups succeed) `IPresentationService`,
+(via `CameraBootstrapper`, or a game's own combined subclass) `ICameraService`, and (via
+`NavigationBootstrapper`, which extends `PlayerSystemsBootstrapper` directly since it has a real
+compile-time dependency on UI, or a game's own combined subclass, registered after `IInputService`/
+`IGameFlowService` so their soft lookups succeed) `INavigationService`.
 
 ## Assemblies
 
@@ -197,7 +223,8 @@ Feedback/Gameplay/Performance/UI are wanted so its soft lookups succeed) `IPrese
 | `GameFramework.Presentation` | Coordinated feedback/presentation orchestration: `FeedbackDefinition` bundles Audio/Haptic/Camera/Visual/Screen/UI/Time channels behind one `IPresentationService.Play` call (Phase 10). Composition root: `PresentationBootstrapper`. References Audio/Feedback/Gameplay/Performance/UI, every one resolved softly at runtime. |
 | `GameFramework.Cameras` | Camera orchestration: `ICameraService` (registration, base activation, override stack), `ICameraMode` (Follow/Static/TargetLook/Manual), world bounds, damped zoom, transitions (Phase 11). Composition root: `CameraBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials` — references only Core/Runtime/Performance; composes with `GameFramework.Presentation`'s camera feedback through script execution order only, no assembly reference either way. |
 | `GameFramework.Cameras.Cinemachine` | Optional alternative driver for the same `ICameraService`/`CameraController` orchestration, backed by a real Cinemachine virtual camera instead of `CameraDriver`'s pure-C# pipeline (Phase 11, added once Cinemachine was installed). `CinemachineCameraAdapter` + `CinemachineCameraBackend`; no composition root/service of its own — plain scene composition. References `GameFramework.Cameras` + `Cinemachine` only; the only assembly in the framework that references Cinemachine. |
-| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, and Camera Configuration validation menu items. |
+| `GameFramework.UI.Navigation` | UI navigation/menu-flow orchestration on top of `IUIService`: stable-id screen/popup registration, a navigation stack independent of Unity's scene history (`Navigate`/`Replace`/`Reset`/`NavigateBack`), back-navigation priority, typed parameters/results, guards, event-driven popups, and centralized Android/back-button routing (Phase 12). Composition root: `NavigationBootstrapper` (extends `PlayerSystemsBootstrapper`). References `GameFramework.UI` (hard) + `GameFramework.Input`/`GameFramework.GameFlow` (soft, `registry.TryGet`). |
+| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, and UI Navigation Catalog validation menu items. |
 | `GameFramework.Cameras.Cinemachine.Editor` | Editor-only; validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend references, duplicate controller ownership, an assigned Confiner with nothing to confine against). Separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. |
 | Matching `*.Tests` / `*.Tests.Runtime` assemblies | EditMode/PlayMode test coverage per system (see Testing below). |
 
@@ -404,6 +431,26 @@ Full per-assembly reference tables and namespace listings live in
   `Camera.ReduceMotion` (off by default) is the one accessibility setting this layer owns — every
   built-in mode/zoom skips damping entirely when it's on, deliberately separate from Presentation's
   existing "Presentation.Channel.Camera" shake toggle (an unrelated concern already owned by Phase 10).
+- **UI Navigation / Menu Flow** (`INavigationService`, Phase 12) — orchestrates Phase 3's
+  `IUIService` screen/popup stack rather than duplicating it: `RegisterScreen`/`RegisterPopup` map a
+  stable `UIScreenId`/`UIPopupId` to a prefab; `Navigate`/`Replace`/`Reset` push/replace/clear-and-root
+  the screen stack; `NavigateBack` implements a centralized priority chain (an open popup closes
+  first, then the current screen's own `IUINavigationBackHandler` gets first refusal, then the stack
+  pops, then `BackRequestedAtRootEvent` publishes for the game/GameFlow/app to decide what "back at
+  the root" means — this framework never assumes one). Typed parameters/results flow through
+  `NavigationRequestOptions` and a small additive seam added to `IUIService.OpenScreen`/`OpenPopup`
+  (`onBeforeOpen`, default null). `INavigationGuard`s can Allow/Block/Defer any request, including
+  back navigation. `IUINavigationTransitionHandler` offers an enter-only visual-transition coroutine
+  hook (exit transitions aren't offered — Phase 3 destroys a closing screen/popup synchronously, so
+  there is no seam to defer that destruction for one). Android/mobile back button is centralized in
+  one internal `NavigationBackButtonDriver` (`KeyCode.Escape`, Unity's documented Android-back
+  mapping, plus an optional `IInputService` logical action) — the only place in the framework that
+  reads it. A navigation command issued while `IsNavigating` is true (including synchronously from
+  inside a lifecycle hook this service itself just triggered) is rejected, never queued — the same
+  deliberate re-entrancy guard `GameFlowService`/`TutorialService` already apply to their own event
+  handlers; a legitimate follow-up call from a hook must be deferred one frame (see the sample).
+  Popups can optionally acquire a `GameFlow.IPauseToken` for as long as they're open, released
+  automatically on close, resolved softly so this works with or without GameFlow registered.
 
 Complete API examples, edge cases, and design rationale for every system are documented in
 `Assets/GameFramework/Documentation/Framework.md` — treat that file as the authoritative reference.
@@ -538,6 +585,27 @@ Complete API examples, edge cases, and design rationale for every system are doc
   Cinemachine-driven camera with **zero code changes to `GameFramework.Presentation` itself** (only
   `CameraFeedbackDriver` picking up `[DefaultExecutionOrder(100)]`, described above); and
   `ResetCamera` returned `true` with no console errors throughout the whole session.
+- Phase 12: `GameFramework.UI.Navigation.Tests.Runtime` (PlayMode-only - no EditMode variant, the
+  same reason `GameFramework.UI.Tests` has none: test-double `UIScreen`/`UIPopup` subclasses are
+  MonoBehaviours, and `AddComponent` rejects a script compiled only for the Editor platform). Covers
+  registration (duplicate/invalid id, unknown screen/popup), push/replace/reset navigation (including
+  parameter delivery before `OnOpened` and `ScreenNavigatedEvent` publication), the full back-priority
+  chain (popup-first, `IUINavigationBackHandler` consuming a request, stack pop with a delivered
+  result, `BackRequestedAtRootEvent` at the root), nested popup stacks (back closes the topmost
+  first), pause-token acquisition/release against a fake `IGameFlowService`, `IsNavigating` correctly
+  blocking a concurrent request during an `IUINavigationTransitionHandler` enter transition and
+  allowing one again once it completes, `INavigationGuard` Allow/Block/Defer (including for back
+  navigation), and `RegisterEventMapping<TEvent>`/`UnregisterEventMapping<TEvent>`. 41/41 Phase 12
+  tests pass; the full project suite (689 EditMode + 129 PlayMode tests) was re-run after this phase
+  with zero regressions. Live-verified in Play Mode via the new Phase12Demo sample scene, this time by
+  invoking the sample's real `Button.onClick` handlers (not raw `INavigationService` calls) through
+  the Unity MCP `execute_code` tool: Main Menu → Character Selection → Car Selection → Customization
+  worked end-to-end with parameters flowing forward at each step; Customization's "Done" button
+  triggered a two-level chained back-navigation (worked around the reentrancy guard above via a
+  one-frame-deferred coroutine) that correctly delivered the chosen car as a typed result to Character
+  Selection's original callback; a nested Settings → Confirm popup stack closed topmost-first on
+  successive `NavigateBack()` calls, leaving Main Menu untouched throughout; and `NavigateBack()` at
+  the root published `BackRequestedAtRootEvent` as expected. Zero console errors/warnings throughout.
 
 ## Packages / Dependencies
 
@@ -559,16 +627,18 @@ Assets/GameFramework/
 │                        Input, Localization, Audio, Feedback, UI, PlayerSystems, Gameplay,
 │                        Performance, Progression, Unlocks, Rewards, Quests, GameFlow, Tutorials,
 │                        Presentation, Cameras); Cameras/Integration/Cinemachine/ holds the optional
-│                        GameFramework.Cameras.Cinemachine assembly
+│                        GameFramework.Cameras.Cinemachine assembly; UI/Navigation/ holds the
+│                        GameFramework.UI.Navigation assembly (Phase 12)
 ├── Editor/              Editor-only tooling (Localization, Gameplay config, Quest content,
-│                        Tutorial content, Feedback content, and Camera Configuration validators);
-│                        Cameras/Cinemachine/ holds the optional .Cinemachine.Editor assembly
+│                        Tutorial content, Feedback content, Camera Configuration, and UI Navigation
+│                        Catalog validators); Cameras/Cinemachine/ holds the optional
+│                        .Cinemachine.Editor assembly
 ├── Samples/              Phase0Demo/ … Phase4Demo/ (one per phase), Phase5Benchmark/,
-│                         Phase6Demo/, Phase7Demo/, Phase9Demo/, Phase10Demo/, Phase11Demo/ (each
-│                         with authored Content/ ScriptableObject assets; Phase11Demo/ additionally
-│                         has a second scene, Phase11CinemachineDemo.unity, for the Cinemachine
-│                         integration) — Phase 8 intentionally has no sample yet (see Framework.md's
-│                         Phase 8 section for why)
+│                         Phase6Demo/, Phase7Demo/, Phase9Demo/, Phase10Demo/, Phase11Demo/, Phase12Demo/
+│                         (each with authored Content/ ScriptableObject/prefab assets; Phase11Demo/
+│                         additionally has a second scene, Phase11CinemachineDemo.unity, for the
+│                         Cinemachine integration) — Phase 8 intentionally has no sample yet (see
+│                         Framework.md's Phase 8 section for why)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```

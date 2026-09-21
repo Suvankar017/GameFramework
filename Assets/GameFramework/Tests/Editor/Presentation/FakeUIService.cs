@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using GameFramework.Runtime.Services;
 using GameFramework.UI;
@@ -46,7 +47,7 @@ namespace GameFramework.Presentation.Tests
             _roots.Clear();
         }
 
-        public T OpenScreen<T>(T prefab) where T : UIScreen => null;
+        public T OpenScreen<T>(T prefab, Action<T> onBeforeOpen = null) where T : UIScreen => null;
         public void CloseScreen(UIScreen screen)
         {
         }
@@ -57,7 +58,7 @@ namespace GameFramework.Presentation.Tests
         {
         }
         public UIScreen CurrentScreen => null;
-        public T OpenPopup<T>(T prefab) where T : UIPopup => null;
+        public T OpenPopup<T>(T prefab, Action<T> onBeforeOpen = null) where T : UIPopup => null;
         public void ClosePopup(UIPopup popup, UIPopupResult result = UIPopupResult.None)
         {
         }

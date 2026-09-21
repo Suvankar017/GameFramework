@@ -87,7 +87,7 @@ namespace GameFramework.UI
 
         public Transform GetLayerRoot(UILayer layer) => _canvases[layer].transform;
 
-        public T OpenScreen<T>(T prefab) where T : UIScreen
+        public T OpenScreen<T>(T prefab, Action<T> onBeforeOpen = null) where T : UIScreen
         {
             Guard.NotNull(prefab, nameof(prefab));
 
@@ -96,6 +96,7 @@ namespace GameFramework.UI
 
             T instance = Object.Instantiate(prefab, GetLayerRoot(prefab.Layer));
             instance.Owner = this;
+            onBeforeOpen?.Invoke(instance);
             _screenStack.Add(instance);
             instance.InternalOpen();
 
@@ -137,7 +138,7 @@ namespace GameFramework.UI
 
         public UIScreen CurrentScreen => _screenStack.Count > 0 ? _screenStack[_screenStack.Count - 1] : null;
 
-        public T OpenPopup<T>(T prefab) where T : UIPopup
+        public T OpenPopup<T>(T prefab, Action<T> onBeforeOpen = null) where T : UIPopup
         {
             Guard.NotNull(prefab, nameof(prefab));
 
@@ -153,6 +154,7 @@ namespace GameFramework.UI
 
             T instance = Object.Instantiate(prefab, layerRoot);
             instance.Owner = this;
+            onBeforeOpen?.Invoke(instance);
             _popups.Add(instance);
             instance.InternalOpen();
 
