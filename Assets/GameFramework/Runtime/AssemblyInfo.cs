@@ -79,3 +79,9 @@ using System.Runtime.CompilerServices;
 // PersistenceService-over-InMemoryPersistenceStorage) for testing PlayerProfileService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.PlayerData.Tests")]
 [assembly: InternalsVisibleTo("GameFramework.PlayerData.Tests.Runtime")]
+
+// Phase 15 monetization test assembly reuses the same pattern to build a minimal, already-
+// initialized ServiceRegistry (fake ITimeService, a real EventService/TimerService/
+// PersistenceService-over-InMemoryPersistenceStorage) for testing AdsService/PurchaseService/
+// EntitlementService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.Monetization.Tests")]

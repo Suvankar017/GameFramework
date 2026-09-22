@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 14 — Mobile Platform & Device Services Framework**, on top of:
+**Phase 15 — Monetization: Ads, IAP & Entitlements Framework**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -93,11 +93,23 @@ that most games need, without any game-specific content.
   boundary). Deliberately does not re-implement application lifecycle (already
   `Performance.Mobile.IApplicationLifecycleService`) or haptics (already `Feedback.IHapticProvider`) —
   see `Framework.md`'s Phase 14 section for the full non-goal list.
+- **Phase 15** — a game-facing Monetization layer, Core/Runtime + a hard dependency on Rewards (for
+  reward/entitlement granting) only: `IAdsService` (Banner/Interstitial/Rewarded, placement-based
+  cooldown/session-limit policy, entitlement-based suppression rules, a rewarded ad that only ever
+  reports `RewardedAdResult.RewardEarned` — it never grants a reward itself), `IPurchaseService`
+  (consumable/non-consumable/subscription products, idempotent transaction processing that survives
+  an application restart, automatic entitlement/reward granting on a completed or restored purchase),
+  and `IEntitlementService` (what the player currently owns, separate from purchase transactions,
+  persisted independently of `PlayerData`). No ad or IAP SDK is installed in this project — only the
+  provider seam (`IAdProvider`/`IPurchaseProvider`) plus deterministic mock providers exist; see
+  `Framework.md`'s Phase 15 section for exactly what a real Google Mobile Ads/Unity IAP adapter would
+  require.
 
-No player character, enemy AI, weapons, ads, analytics, IAP, remote config, or multiplayer exists
-yet, and no concrete currency/item/level/unlock/reward/quest/achievement/tutorial-content/feedback-
-content is defined for any specific game — those consume this infrastructure, they don't live in
-it. See `Assets/GameFramework/Documentation/Framework.md`'s Roadmap section for what each phase explicitly
+No player character, enemy AI, weapons, real ad network/store integration, analytics, remote config,
+or multiplayer exists yet, and no concrete currency/item/level/unlock/reward/quest/achievement/
+tutorial-content/feedback-content/ad-placement/product is defined for any specific game — those
+consume this infrastructure, they don't live in it. See
+`Assets/GameFramework/Documentation/Framework.md`'s Roadmap section for what each phase explicitly
 left out and the seams a later phase would extend.
 
 ## Target Environment
@@ -233,7 +245,10 @@ compile-time dependency on UI, or a game's own combined subclass, registered aft
 `IGameFlowService` so their soft lookups succeed) `INavigationService`, and (via `PlatformBootstrapper`, or a game's own combined subclass)
 `IPlatformService` → `IDeviceInfoService` → `IScreenService` → `IClipboardService` →
 `IPlatformUrlService` → `IAppStoreService` → `INetworkReachabilityService` → `IPermissionService` →
-`IAppSettingsService`.
+`IAppSettingsService`, and (via `MonetizationBootstrapper`, which extends `ProgressionBootstrapper`
+directly since it has a real compile-time dependency on Rewards) `IEntitlementService` →
+`IAdsService` → `IPurchaseService` (the latter two resolve `IEntitlementService` softly during their
+own `Initialize`, so it is registered first).
 
 ## Assemblies
 
@@ -261,7 +276,8 @@ compile-time dependency on UI, or a game's own combined subclass, registered aft
 | `GameFramework.UI.Navigation` | UI navigation/menu-flow orchestration on top of `IUIService`: stable-id screen/popup registration, a navigation stack independent of Unity's scene history (`Navigate`/`Replace`/`Reset`/`NavigateBack`), back-navigation priority, typed parameters/results, guards, event-driven popups, and centralized Android/back-button routing (Phase 12). Composition root: `NavigationBootstrapper` (extends `PlayerSystemsBootstrapper`). References `GameFramework.UI` (hard) + `GameFramework.Input`/`GameFramework.GameFlow` (soft, `registry.TryGet`). |
 | `GameFramework.PlayerData` | Player-profile/player-data orchestration on top of `IPersistenceService`: profile identity/lifecycle, `PlayerDataSection<TData>` data sections, autosave, corruption/backup recovery (Phase 13). Composition root: `PlayerDataBootstrapper`. Sibling — references only Core/Runtime. |
 | `GameFramework.Platform` | Platform identity, device information/capabilities, screen/orientation/safe-area, clipboard, URL opening, app-store linking, network reachability, and Camera/Microphone permissions (Phase 14). Composition root: `PlatformBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras`/`PlayerData` — references only Core/Runtime; deliberately does not re-implement Phase 5's application lifecycle or Phase 3's haptics. |
-| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, UI Navigation Catalog validation, Player Data diagnostics, and Platform diagnostics menu items. |
+| `GameFramework.Monetization` | Ads (`IAdsService`: Banner/Interstitial/Rewarded, placement policy/frequency caps, entitlement-based suppression), Purchases (`IPurchaseService`: consumable/non-consumable/subscription products, idempotent transaction processing, restore), Entitlements (`IEntitlementService`) (Phase 15). Composition root: `MonetizationBootstrapper` (extends `ProgressionBootstrapper`). References `GameFramework.Progression`/`.Unlocks`/`.Rewards` (hard) + `GameFramework.Performance` (hard, for lifecycle event types only). Ships only deterministic mock providers — no ad/IAP SDK is installed in this project. |
+| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, UI Navigation Catalog validation, Player Data diagnostics, Platform diagnostics, and Monetization configuration validation/diagnostics menu items. |
 | `GameFramework.Cameras.Cinemachine.Editor` | Editor-only; validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend references, duplicate controller ownership, an assigned Confiner with nothing to confine against). Separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. |
 | Matching `*.Tests` / `*.Tests.Runtime` assemblies | EditMode/PlayMode test coverage per system (see Testing below). |
 
@@ -519,6 +535,24 @@ Full per-assembly reference tables and namespace listings live in
   isolated `AndroidJavaObject` boundary, `Platform/Android/AndroidAppSettingsProvider`). References
   only Core/Runtime; deliberately does not duplicate Phase 5's `IApplicationLifecycleService` or
   Phase 3's `IHapticProvider` — see Framework.md's Phase 14 section for the full non-goal list.
+- **Monetization** (`IAdsService`/`IPurchaseService`/`IEntitlementService`, Phase 15) — three
+  separate interfaces, not one giant service: an entitlement is what the player currently owns,
+  distinct from the purchase transaction that granted it. `IAdsService` covers Banner/Interstitial/
+  Rewarded via a stable `AdPlacementId`, mechanism-level `CanShow` policy (cooldown/session-limit/
+  entitlement suppression, all authored per placement, never hard-coded), and a rewarded ad that only
+  ever reports `RewardedAdResult.RewardEarned` after the provider confirms it — it never grants a
+  reward itself; that stays the game's own code, optionally via the small opt-in
+  `AdPlacementRewardBridge`. `IPurchaseService` covers Consumable/NonConsumable/Subscription products
+  via a stable `ProductId`, with idempotent transaction processing (a persisted processed-transaction
+  set survives an application restart) and *automatic* entitlement/reward granting on a completed or
+  restored purchase (unlike Ads, a product's grant is fixed authored data, so `PurchaseService` calls
+  `Rewards.IRewardService`/`IEntitlementService` directly). `IEntitlementService` persists directly
+  through `IPersistenceService` (like `RewardService`/`UnlockService`, not a `PlayerData` profile
+  section) and reconciles with a store restore via `SyncFromProvider` without revoking anything the
+  restore simply didn't mention. No ad or IAP SDK is installed in this project — only
+  `Providers.Mock.MockAdProvider`/`MockPurchaseProvider` exist behind the `IAdProvider`/
+  `IPurchaseProvider` seam; a client-side purchase check is explicitly not treated as secure
+  validation — see Framework.md's Phase 15 section for the full design and provider status.
 
 Complete API examples, edge cases, and design rationale for every system are documented in
 `Assets/GameFramework/Documentation/Framework.md` — treat that file as the authoritative reference.
@@ -701,6 +735,21 @@ Complete API examples, edge cases, and design rationale for every system are doc
   effect, `ClipboardService` set/get/has round-trips, and `PermissionService.RequestPermission`
   invoking its callback exactly once. 36/36 Phase 14 tests pass; the full project suite (734 EditMode
   + 171 PlayMode tests) was re-run after this phase with zero regressions.
+- Phase 15: `GameFramework.Monetization.Tests` (EditMode) reuses the same `TestRegistryFactory`/
+  `TestDefinitions` pattern, plus two fully-controllable test doubles (`FakeAdProvider`/
+  `FakePurchaseProvider`, distinct from the shipped `MockAdProvider`/`MockPurchaseProvider`, which get
+  their own `MockProviderTests` coverage) so multi-step scenarios (a fullscreen ad already showing, a
+  duplicate transaction callback, a deferred purchase resolving later) are deterministic. Covers Ads
+  init/load/show/hide, cooldown/session-limit policy, entitlement suppression (including "Rewarded is
+  not suppressed unless explicitly configured"), rewarded success/failure/closed-without-reward/
+  already-showing, load-retry backoff, and pause/resume banner hide/reshow; Purchases product
+  loading, success/cancelled/failed/pending-then-resolved, already-owned short-circuiting the
+  provider, validation failure, duplicate-transaction idempotency, and restore idempotency;
+  Entitlements grant/revoke/expiration/sync/persistence round-trip; and integration flows (Remove Ads
+  suppressing Banner/Interstitial but not Rewarded end-to-end, a consumable purchase's reward
+  surviving a simulated application restart without double-granting, and `AdPlacementRewardBridge`
+  claiming its mapped reward). 53/53 Phase 15 tests pass; the full project suite (787 EditMode + 171
+  PlayMode tests) was re-run after this phase with zero regressions.
 
 ## Packages / Dependencies
 
@@ -712,6 +761,9 @@ Complete API examples, edge cases, and design rationale for every system are doc
   framework, including `GameFramework.Cameras` itself, has no reference to it and works without it
   installed.
 - `com.coplaydev.unity-mcp` — Unity MCP integration for AI-tool-driven editor control.
+- No ad network SDK (e.g. Google Mobile Ads) or `com.unity.purchasing` (Unity IAP) is installed —
+  Phase 15's `GameFramework.Monetization` ships only the `IAdProvider`/`IPurchaseProvider` seam and
+  deterministic mock providers behind it; see `Framework.md`'s Phase 15 section, "Provider status."
 
 ## Folder Layout
 
@@ -721,24 +773,27 @@ Assets/GameFramework/
 │                        State, SceneManagement, Time, Timers, Events, Persistence, Settings,
 │                        Input, Localization, Audio, Feedback, UI, PlayerSystems, Gameplay,
 │                        Performance, Progression, Unlocks, Rewards, Quests, GameFlow, Tutorials,
-│                        Presentation, Cameras, PlayerData, Platform); Cameras/Integration/Cinemachine/
-│                        holds the optional GameFramework.Cameras.Cinemachine assembly; UI/Navigation/
-│                        holds the GameFramework.UI.Navigation assembly (Phase 12); PlayerData/
-│                        holds the GameFramework.PlayerData assembly (Phase 13); Platform/ holds the
-│                        GameFramework.Platform assembly (Phase 14), with Android/ isolating the one
-│                        AndroidJavaObject boundary
+│                        Presentation, Cameras, PlayerData, Platform, Monetization); Cameras/Integration/
+│                        Cinemachine/ holds the optional GameFramework.Cameras.Cinemachine assembly;
+│                        UI/Navigation/ holds the GameFramework.UI.Navigation assembly (Phase 12);
+│                        PlayerData/ holds the GameFramework.PlayerData assembly (Phase 13); Platform/
+│                        holds the GameFramework.Platform assembly (Phase 14), with Android/ isolating
+│                        the one AndroidJavaObject boundary; Monetization/ holds the
+│                        GameFramework.Monetization assembly (Phase 15), with Ads/, Purchases/,
+│                        Entitlements/, Providers/Mock/, and Integration/ subfolders
 ├── Editor/              Editor-only tooling (Localization, Gameplay config, Quest content,
 │                        Tutorial content, Feedback content, Camera Configuration, UI Navigation
-│                        Catalog, Player Data diagnostics, and Platform diagnostics); Cameras/Cinemachine/
-│                        holds the optional .Cinemachine.Editor assembly
+│                        Catalog, Player Data diagnostics, Platform diagnostics, and Monetization
+│                        configuration validation/diagnostics); Cameras/Cinemachine/ holds the
+│                        optional .Cinemachine.Editor assembly
 ├── Samples/              Phase0Demo/ … Phase4Demo/ (one per phase), Phase5Benchmark/,
 │                         Phase6Demo/, Phase7Demo/, Phase9Demo/, Phase10Demo/, Phase11Demo/, Phase12Demo/
 │                         (each with authored Content/ ScriptableObject/prefab assets; Phase11Demo/
 │                         additionally has a second scene, Phase11CinemachineDemo.unity, for the
-│                         Cinemachine integration) — Phase 8, Phase 13, and Phase 14 intentionally have
-│                         no sample yet (Phase 8: see Framework.md's Phase 8 section for why; Phase 13/
-│                         14: each phase's infrastructure is fully exercised by its own test suite
-│                         instead)
+│                         Cinemachine integration) — Phase 8, Phase 13, Phase 14, and Phase 15
+│                         intentionally have no sample yet (Phase 8: see Framework.md's Phase 8
+│                         section for why; Phase 13/14/15: each phase's infrastructure is fully
+│                         exercised by its own test suite instead)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```

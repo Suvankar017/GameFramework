@@ -31,6 +31,7 @@
   <Project Path="GameFramework.Gameplay.Tests.csproj" />
   <Project Path="GameFramework.Cameras.Tests.csproj" />
   <Project Path="GameFramework.Audio.Tests.csproj" />
+  <Project Path="GameFramework.Monetization.csproj" />
   <Project Path="GameFramework.Performance.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase2Demo.csproj" />
   <Project Path="GameFramework.UI.Navigation.Tests.Runtime.csproj" />
@@ -38,6 +39,7 @@
   <Project Path="GameFramework.Feedback.Tests.csproj" />
   <Project Path="GameFramework.Platform.Tests.Runtime.csproj" />
   <Project Path="GameFramework.UI.Tests.Runtime.csproj" />
+  <Project Path="GameFramework.Monetization.Tests.csproj" />
   <Project Path="GameFramework.Feedback.csproj" />
   <Project Path="GameFramework.Quests.Tests.csproj" />
   <Project Path="GameFramework.Progression.Tests.csproj" />

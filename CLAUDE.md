@@ -2160,3 +2160,131 @@ section — this section is the stable rule summary; that one is the living refe
 * `AppStoreConfig` (Android package name, iOS App Store id) is optional, game-supplied configuration
   — never hard-code a project's store identifiers into framework code. Missing/unconfigured platforms
   fail gracefully (`OpenStorePage`/`OpenReviewPage` return `false` and log a warning), never throw.
+
+---
+
+# 81. Phase 15 Monetization: Ads, IAP & Entitlements Framework
+
+Phase 15 added `GameFramework.Monetization` — a game-facing Ads/Purchases/Entitlements API so
+gameplay/UI code never depends on Google Mobile Ads, Unity IAP, StoreKit, or Google Play Billing
+directly. Full API examples and design rationale live in
+`Assets/GameFramework/Documentation/Framework.md`'s "Monetization Framework" section — this section
+is the stable rule summary; that one is the living reference. No ad or IAP SDK is installed in this
+project (`Packages/manifest.json` has neither Google Mobile Ads nor `com.unity.purchasing`) — only
+the provider seam and deterministic mock providers exist.
+
+## Monetization Architecture
+
+* `GameFramework.Monetization` references `GameFramework.Core`/`GameFramework.Runtime` (minimal-
+  sibling shape) plus a genuine hard dependency on `GameFramework.Rewards` (a completed/restored
+  purchase claims through `Rewards.IRewardService`/grants through this phase's own
+  `IEntitlementService`) and a hard reference to `GameFramework.Performance` for the
+  `ApplicationPausedEvent`/`ApplicationResumedEvent` struct types only, consumed through
+  `IEventService` — never a `TryGet` lookup on `IApplicationLifecycleService` itself. Do not add a
+  reference to Input/UI/Audio/Feedback/Gameplay from this assembly.
+* `MonetizationBootstrapper` extends `Rewards.ProgressionBootstrapper` directly — the same reasoning
+  `Quests.QuestsBootstrapper` already established for its own hard dependency on Rewards. It registers
+  `IEntitlementService` before `IAdsService`/`IPurchaseService`, since both resolve it softly
+  (`registry.TryGet`) during their own `Initialize`, which only succeeds once it is already
+  registered and initialized. Do not reorder this registration.
+* Ads, Purchases, and Entitlements are three separate interfaces, never one giant
+  `IMonetizationService`. A purchase is a transaction/event; an entitlement is what the player
+  currently owns; do not conflate the two or infer ownership from raw purchase history.
+* `IAdsService` never references `Rewards.IRewardService`/`IEntitlementService` (grant side) at all —
+  it only ever reports `RewardedAdResult`/publishes `AdRewardEarnedEvent`. `IPurchaseService`, by
+  contrast, resolves both softly and grants automatically on a completed/restored purchase. Do not
+  make `IAdsService` grant a reward directly, and do not remove `IPurchaseService`'s automatic grant
+  in favor of a manual game-side step — see "Why Ads and Purchases integrate with Rewards
+  differently" in Framework.md for the reasoning behind this asymmetry.
+* No Google Mobile Ads or Unity IAP adapter exists in this project. Do not fabricate one against
+  guessed APIs — if a game installs one of those packages, a new adapter assembly (referencing only
+  that SDK) implements `IAdProvider`/`IPurchaseProvider` against the actually-installed version, and
+  nothing in `AdsService`/`PurchaseService`/`MonetizationBootstrapper`'s public surface needs to
+  change beyond which provider instance the bootstrapper constructs.
+
+## Ads Rules
+
+* Game code requests a stable `AdPlacementId` (e.g. `"RewardedRevive"`), never a raw provider ad-unit
+  id — those live only in `AdConfiguration`/`AdPlacementConfig`, resolved per-platform via
+  `ResolvePlatformUnitId()`.
+* Only one Interstitial/Rewarded ad may be "showing" at a time. That mutual-exclusion check happens
+  *before* `CanShow`'s cooldown/session-limit/entitlement-suppression policy check, in both `Show`
+  and `ShowRewarded` — a fullscreen ad already on screen is a structural constraint, not a policy one,
+  and must win even if the same placement would otherwise be back on cooldown the instant it's shown.
+  Do not reorder these checks.
+* A reward must only ever be granted for `RewardedAdResult.RewardEarned`, reported after
+  `IAdProvider.AdRewardEarned` actually fires (always before that placement's `AdClosed`, never
+  instead of it) — never merely because `ShowRewarded` was called. Do not grant on `AdShown`/`AdClosed`
+  alone.
+* Cooldown/session-limit are authored per placement (`AdPlacementConfig.CooldownSeconds`/
+  `SessionShowLimit`, 0 = no limit) and checked via `ITimeService.Realtime` — never
+  `UnityEngine.Time` directly, and never a game-specific universal rule like "every 3 levels" baked
+  into the framework.
+* Entitlement suppression (`AdConfiguration.EntitlementSuppressions`) maps an owned `EntitlementId`
+  to the specific `AdType`s it suppresses. Do not assume Remove Ads suppresses Rewarded — that must
+  stay an authored, explicit choice per rule, never a hard-coded default.
+* `AdsService` hides active banners on `ApplicationPausedEvent` and re-shows them on
+  `ApplicationResumedEvent` (both consumed via `IEventService`, not a new `MonoBehaviour` callback).
+  Do not add a second place in the framework that reads `OnApplicationPause`/`OnApplicationFocus` for
+  ad purposes.
+* A load failure retries up to `AdConfiguration.MaxLoadRetries` times via `ITimerService`, backing off
+  by `RetryBackoffSeconds * attemptNumber`. Do not poll for ad availability every frame.
+
+## Purchase Rules
+
+* Game code requests a stable, logical `ProductId` (e.g. `"remove_ads"`), never a store product id —
+  those live only in `ProductCatalog`/`ProductDefinition`, resolved per-platform via
+  `ResolvePlatformProductId()`.
+* Purchase idempotency is mandatory and already implemented: every granted transaction id is recorded
+  in a persisted set (`PurchaseSaveData`, its own `IPersistenceService` key) before
+  `PurchaseService.ProcessGrant` ever calls `Rewards.IRewardService.TryClaim`/
+  `IEntitlementService.GrantEntitlement` — a duplicate provider callback for an already-processed
+  transaction id must report the same outcome without granting again. Do not weaken this to a
+  best-effort check, and do not claim it survives a crash mid-write — Phase 2's `IPersistenceService`
+  offers no atomic-transaction primitive, and `PurchaseSaveData`'s own remarks document that
+  limitation explicitly.
+* A completed or restored purchase automatically grants `ProductDefinition.GrantedEntitlementId`/
+  `GrantedRewardId` — this is deliberate (a product's grant is fixed, authored data, not a
+  gameplay-time decision) and different from how Ads integrates with Rewards (see "Ads Rules" above).
+  Do not add a seam for a game to intercept/override this grant; if a product needs conditional
+  logic, that belongs in the reward/entitlement content itself (`IReward.CanGrant`), not in
+  `PurchaseService`.
+* `IPurchaseValidator`/`LocalPurchaseValidator` are the validation *seam*, not real security. Never
+  claim client-side validation prevents fraud — a future server-backed `IPurchaseValidator`
+  implementation is the intended extension point, and this phase deliberately does not build a
+  backend.
+* `RestorePurchases` grants each restored product under a `"restore:{productId}"` dedupe key (a
+  provider isn't guaranteed to supply a real per-product transaction id on restore). Do not assume
+  this makes restore fully re-grant-capable after a manual revoke — that's a documented, accepted
+  scope limitation, not a bug to "fix" by removing the dedupe.
+
+## Entitlement Rules
+
+* `IEntitlementService` persists directly through `IPersistenceService` (`EntitlementSaveData`, its
+  own key) — the same pattern `Rewards.RewardService`/`Unlocks.UnlockService` already use. Do not
+  retrofit it onto a `PlayerData` profile section; a game wanting profile-scoped entitlements wraps
+  this service's data in its own `PlayerDataSection<TData>` adapter, the same non-retrofit precedent
+  Phase 13 already established for its own six self-persisting systems.
+* `HasEntitlement` accounts for expiration (`EntitlementState.IsCurrentlyActive`); `GetEntitlement`
+  does not. A lapsed subscription is "owned but not currently active," never "never owned" — do not
+  conflate the two when building UI that distinguishes a "renew" prompt from a "buy" prompt.
+* `SyncFromProvider` never revokes an id the provider simply didn't report on. A real store restore
+  is non-exhaustive by nature (e.g. it does not re-list an already-consumed consumable) — "not
+  reported" is not the same claim as "not owned." Do not add logic that revokes everything not
+  present in a restore's result set.
+
+## Provider & Testing Rules
+
+* `Providers.Mock.MockAdProvider`/`MockPurchaseProvider` are the only shipped `IAdProvider`/
+  `IPurchaseProvider` implementations. They must never be able to grant a real purchase or represent
+  a real ad network — keep them deterministic and clearly Editor/test-scoped.
+* `AdsServiceTests`/`PurchaseServiceTests` use fully-controllable `FakeAdProvider`/
+  `FakePurchaseProvider` test doubles (not the shipped mocks) specifically so multi-step scenarios
+  (a fullscreen ad already showing, a duplicate transaction callback, a deferred purchase resolving
+  later) are deterministic to set up. The shipped mocks get their own separate `MockProviderTests`
+  coverage. Do not conflate the two roles when adding new tests.
+* Do not call `GameBootstrapper.Instance` from inside `GameFramework.Monetization` runtime code —
+  every service is resolved through the `IServiceRegistry` passed to `Initialize`, the same rule
+  every other phase's services already follow. `Editor.Monetization.MonetizationDiagnosticsMenu` is
+  the one place allowed to reach for `GameBootstrapper.Instance` (development-time-only, mirroring
+  `PlatformDiagnosticsMenu`/`PlayerDataDiagnosticsMenu`'s existing precedent).

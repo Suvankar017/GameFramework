@@ -17,7 +17,8 @@
         "GameFramework.UI",
         "GameFramework.UI.Navigation",
         "GameFramework.PlayerData",
-        "GameFramework.Platform"
+        "GameFramework.Platform",
+        "GameFramework.Monetization"
     ],
     "includePlatforms": [
         "Editor"

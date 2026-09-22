@@ -1,0 +1,30 @@
+{
+    "name": "GameFramework.Monetization.Tests",
+    "rootNamespace": "GameFramework.Monetization.Tests",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Progression",
+        "GameFramework.Unlocks",
+        "GameFramework.Rewards",
+        "GameFramework.Performance",
+        "GameFramework.Monetization",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

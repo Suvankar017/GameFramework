@@ -256,6 +256,24 @@ site is unaffected) — the one seam Navigation needed to deliver typed paramete
 before its own `OnOpened` lifecycle hook fires, without Phase 3 needing to know Navigation exists.
 See [UI Navigation & Menu Flow Framework](#ui-navigation--menu-flow-framework) for the full design.
 
+`GameFramework.Monetization` (Phase 15) references `GameFramework.Core`/`GameFramework.Runtime`
+(minimal-sibling shape) plus `GameFramework.Rewards` (hard — a completed/restored purchase claims
+through `IRewardService`/grants through this phase's own `IEntitlementService`, the same "genuine
+compile-time need" reasoning `Quests.QuestsBootstrapper` already established for its own hard
+dependency on Rewards) and `GameFramework.Performance` (hard reference for the
+`ApplicationPausedEvent`/`ApplicationResumedEvent` struct types only — `AdsService` subscribes to
+them through `IEventService`, so if a game never registers `Performance.Mobile.IApplicationLifecycleService`
+nothing publishes those events and the subscription simply never fires; no `TryGet` lookup on the
+service itself is needed). `MonetizationBootstrapper` extends `Rewards.ProgressionBootstrapper`
+directly rather than sitting beside it, the same reasoning `QuestsBootstrapper` uses for the same
+kind of hard dependency. `IAdsService` never references `IRewardService`/`IEntitlementService` at
+all — a rewarded ad only ever reports `RewardedAdResult`/publishes `AdRewardEarnedEvent`, and
+granting the reward is either the game's own code or the small optional
+`Integration.AdPlacementRewardBridge`; `IPurchaseService`, by contrast, resolves both softly
+(`registry.TryGet`) and grants automatically, since a product's grant is fixed authored data, not a
+gameplay-time decision — see [Monetization Framework](#monetization-framework) for the full
+Ads-vs-Purchases distinction and why it exists.
+
 ## Folder structure
 
 ```text
@@ -350,14 +368,35 @@ Assets/GameFramework/
 │               ├── AssemblyInfo.cs InternalsVisibleTo for .Cinemachine.Tests(.Runtime)
 │               └── (root)          CinemachineBoundsTranslator.cs, CinemachineCameraAdapter.cs,
 │                                    CinemachineCameraBackend.cs
+│   └── Monetization/               GameFramework.Monetization.asmdef (Phase 15)
+│       ├── AssemblyInfo.cs         InternalsVisibleTo for GameFramework.Monetization.Tests
+│       ├── Ads/                    AdType.cs, AdPlacementId.cs, AdShowResult.cs,
+│       │                           AdAvailabilityReason.cs, RewardedAdResult.cs,
+│       │                           AdPlacementConfig.cs, AdEntitlementSuppressionRule.cs,
+│       │                           AdConfiguration.cs, AdEvents.cs, IAdProvider.cs,
+│       │                           IAdsService.cs, AdsService.cs, AdsDiagnostics.cs
+│       ├── Purchases/              ProductId.cs, ProductType.cs, ProductDefinition.cs,
+│       │                           ProductCatalog.cs, Product.cs, PurchaseResultKind.cs,
+│       │                           PurchaseResult.cs, RestoreResult.cs, IPurchaseValidator.cs,
+│       │                           LocalPurchaseValidator.cs, IPurchaseProvider.cs,
+│       │                           IPurchaseService.cs, PurchaseService.cs, PurchaseSaveData.cs,
+│       │                           PurchaseEvents.cs, PurchaseDiagnostics.cs
+│       ├── Entitlements/           EntitlementId.cs, EntitlementSource.cs, EntitlementState.cs,
+│       │                           EntitlementChangedEvent.cs, EntitlementSaveData.cs,
+│       │                           IEntitlementService.cs, EntitlementService.cs
+│       ├── Providers/Mock/         MockAdSimulationMode.cs, MockAdProvider.cs,
+│       │                           MockPurchaseSimulationMode.cs, MockPurchaseProvider.cs
+│       ├── Integration/            AdPlacementRewardBridge.cs
+│       └── (root)                  MonetizationProviderState.cs, MonetizationBootstrapper.cs
 ├── Editor/
-│   ├── GameFramework.Editor.asmdef (Phase 3, extended Phase 4/10/11)
+│   ├── GameFramework.Editor.asmdef (Phase 3, extended Phase 4/10/11/15)
 │   ├── Localization/             LocalizationTableValidator.cs
 │   ├── Gameplay/                 GameplayConfigValidator.cs (Phase 4)
 │   ├── Cameras/                  CameraConfigurationValidator.cs (Phase 11)
 │   ├── Cameras/Cinemachine/      GameFramework.Cameras.Cinemachine.Editor.asmdef (Phase 11, optional) -
 │   │                              CinemachineCameraSetupValidator.cs
-│   └── UI/Navigation/            UINavigationCatalogValidator.cs (Phase 12)
+│   ├── UI/Navigation/            UINavigationCatalogValidator.cs (Phase 12)
+│   └── Monetization/             MonetizationConfigValidator.cs, MonetizationDiagnosticsMenu.cs (Phase 15)
 ├── Tests/
 │   ├── Editor/                          GameFramework.Core.Tests.asmdef (EditMode)
 │   │   ├── Validation/ , Extensions/
@@ -374,6 +413,7 @@ Assets/GameFramework/
 │   │       ├── Ticking/ , Profiling/
 │   │   └── Cameras/                     GameFramework.Cameras.Tests.asmdef (EditMode, Phase 11)
 │   │       └── Cinemachine/             GameFramework.Cameras.Cinemachine.Tests.asmdef (EditMode, optional)
+│   │   └── Monetization/                GameFramework.Monetization.Tests.asmdef (EditMode, Phase 15)
 │   └── Runtime/                         GameFramework.Core.Tests.Runtime.asmdef (PlayMode)
 │       ├── Extensions/
 │       ├── Framework/                   GameFramework.Runtime.Tests.Runtime.asmdef (PlayMode)
@@ -418,11 +458,13 @@ Assets/GameFramework/
 | `GameFramework.Presentation` | `Runtime/Presentation` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Audio`, `GameFramework.Feedback`, `GameFramework.Gameplay`, `GameFramework.Performance`, `GameFramework.UI` (every dependency resolved *softly* at runtime — see [Architecture](#architecture)) | Coordinated feedback/presentation orchestration: `FeedbackDefinition` bundles Audio/Haptic/Camera/Visual/Screen/UI/Time channels behind one `IPresentationService.Play` call (Phase 10). Composition root: `PresentationBootstrapper`. |
 | `GameFramework.Cameras` | `Runtime/Cameras` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance` (sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials` — no Input/UI/Audio/Feedback/Gameplay/Presentation reference either direction) | Camera orchestration: `ICameraService` (registration, base activation, override stack), `ICameraMode` (Follow/Static/TargetLook/Manual), world bounds, damped zoom, transitions (Phase 11). Composition root: `CameraBootstrapper`. |
 | `GameFramework.Cameras.Cinemachine` | `Runtime/Cameras/Integration/Cinemachine` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance`, `GameFramework.Cameras`, `Cinemachine` (the only assembly in the framework that references it) | Optional alternative driver for `ICameraService`/`CameraController`, backed by a real `CinemachineVirtualCamera`/`CinemachineBrain` instead of `CameraDriver`'s pure-C# pipeline (Phase 11). No composition root/service of its own — plain scene composition (`CinemachineCameraAdapter` + `CinemachineCameraBackend`). |
-| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials`, `GameFramework.Presentation`, `GameFramework.Audio`, `GameFramework.Cameras`, `GameFramework.UI`, `GameFramework.UI.Navigation`, `GameFramework.PlayerData` | Editor-only. Localization table, Gameplay config, Quest content, Tutorial content, Feedback content, Camera Configuration, UI Navigation catalog validation menu items, and Player Data diagnostics. |
+| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials`, `GameFramework.Presentation`, `GameFramework.Audio`, `GameFramework.Cameras`, `GameFramework.UI`, `GameFramework.UI.Navigation`, `GameFramework.PlayerData`, `GameFramework.Platform`, `GameFramework.Monetization` | Editor-only. Localization table, Gameplay config, Quest content, Tutorial content, Feedback content, Camera Configuration, UI Navigation catalog validation menu items, Player Data diagnostics, Platform diagnostics, and Monetization configuration validation/diagnostics. |
 | `GameFramework.Cameras.Cinemachine.Editor` | `Editor/Cameras/Cinemachine` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Cameras`, `GameFramework.Cameras.Cinemachine`, `Cinemachine` | Editor-only, separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. Validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend, duplicate controller ownership, an assigned Confiner with nothing to confine against). |
 | `GameFramework.UI.Navigation` | `Runtime/UI/Navigation` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.UI` (hard), `GameFramework.Input`, `GameFramework.GameFlow` (both soft, resolved via `registry.TryGet`), `GameFramework.PlayerSystems` (only for `NavigationBootstrapper` to subclass `PlayerSystemsBootstrapper`) | UI navigation/menu-flow orchestration on top of Phase 3's `IUIService`: stable-id screen/popup registration, a navigation stack independent of Unity's scene history, back-navigation priority, typed parameters/results, guards, and centralized Android/back-button routing (Phase 12). Composition root: `NavigationBootstrapper`. |
 | `GameFramework.PlayerData` | `Runtime/PlayerData` | `GameFramework.Core`, `GameFramework.Runtime` (sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras` — no Input/UI/Audio/Feedback/Gameplay/GameFlow/Progression/Navigation reference) | Player-profile and player-data orchestration on top of Phase 2's `IPersistenceService`: profiles, modular sections, dirty tracking, autosave/debounce, migration forwarding, corruption/backup recovery (Phase 13). Composition root: `PlayerDataBootstrapper`. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` / `.Presentation.Tests` / `.Cameras.Tests` / `.Cameras.Cinemachine.Tests` / `.PlayerData.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Platform` | `Runtime/Platform` | `GameFramework.Core`, `GameFramework.Runtime` (sibling — no Input/UI/Audio/Feedback/Gameplay/Performance reference) | Platform identity, device information/capabilities, screen/orientation/safe-area, clipboard, URL opening, app-store linking, network reachability, Camera/Microphone permissions, Android app-settings deep link (Phase 14). Composition root: `PlatformBootstrapper`. |
+| `GameFramework.Monetization` | `Runtime/Monetization` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Rewards` (hard — reward/entitlement grant on purchase), `GameFramework.Performance` (hard reference for `ApplicationPausedEvent`/`ApplicationResumedEvent` types only, consumed via `IEventService`) | Ads (`IAdsService`: Banner/Interstitial/Rewarded, placement policy, frequency caps), Purchases (`IPurchaseService`: consumable/non-consumable/subscription products, idempotent transaction processing, restore), Entitlements (`IEntitlementService`: what the player currently owns, separate from purchase transactions) (Phase 15). Composition root: `MonetizationBootstrapper` (extends `Rewards.ProgressionBootstrapper`). Ships only mock providers — no ad/IAP SDK is installed in this project. |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` / `.Presentation.Tests` / `.Cameras.Tests` / `.Cameras.Cinemachine.Tests` / `.PlayerData.Tests` / `.Monetization.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
 | `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` / `.Presentation.Tests.Runtime` / `.Cameras.Tests.Runtime` / `.Cameras.Cinemachine.Tests.Runtime` / `.UI.Navigation.Tests.Runtime` / `.PlayerData.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here; Phase 10's visual-effect spawning, since `UnityEngine.Object.Destroy` is refused outside Play Mode; Phase 11's `CameraDriver.LateUpdate` actually firing, since EditMode never runs the player loop; the Cinemachine integration's activation/target/zoom/confiner wiring against a real `CinemachineBrain`/`CinemachineVirtualCamera`; Phase 12's `NavigationService` orchestrating real `UIScreen`/`UIPopup` instances; Phase 13's `PlayerDataBootstrapper`/`PlayerDataLifecycleDriver` needing real `Awake`/`DontDestroyOnLoad`). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
@@ -3853,6 +3895,227 @@ each directly testable via a `public static` pure method with no `Application.Op
 callback exactly once. 36/36 Phase 14 tests pass; the full pre-existing suite (734 EditMode + 171
 PlayMode tests as of this phase) still passes unchanged.
 
+## Monetization Framework
+
+Phase 15 adds `GameFramework.Monetization` — a game-facing Ads/IAP/Entitlements API so gameplay/UI
+code never depends on Google Mobile Ads, Unity IAP, StoreKit, or Google Play Billing directly.
+
+```text
+Game / Gameplay / UI
+        v
+IAdsService / IPurchaseService / IEntitlementService   (GameFramework.Monetization)
+        v
+IAdProvider / IPurchaseProvider                         (provider seam)
+        v
+MockAdProvider / MockPurchaseProvider                    (this phase's only shipped providers)
+        v
+(a future GoogleMobileAdsProvider / UnityIapPurchaseProvider, once an SDK is installed)
+```
+
+No ad or IAP SDK is installed in this project (`Packages/manifest.json` has neither Google Mobile
+Ads nor `com.unity.purchasing`) — see "Provider status" below for exactly what installing one would
+require.
+
+### Three separate services, not one
+
+Ads, Purchases, and Entitlements are three interfaces, not one giant `IMonetizationService` — see
+CLAUDE.md's Phase 15 brief, section 4. A purchase is a transaction/event; an entitlement is what the
+player currently owns; the two are deliberately different types (`Purchases.PurchaseResult` vs.
+`Entitlements.EntitlementState`) so a game never has to infer ownership from raw purchase history.
+
+### Ads
+
+- **`IAdsService`** (`AdsService`) — `Load`/`Show`/`ShowRewarded`/`Hide`, keyed by a stable,
+  designer-authored `AdPlacementId` (e.g. `"RewardedRevive"`), never a raw provider ad-unit id (those
+  live only in `AdConfiguration`, mapped per-platform via `AdPlacementConfig.ResolvePlatformUnitId`).
+  `AdType` is `Banner`/`Interstitial`/`Rewarded`. Only one Interstitial/Rewarded ad may be "showing"
+  at a time (a structural mutual-exclusion slot, checked *before* cooldown/session-limit policy —
+  see `AdsService.Show`'s remarks on why that ordering matters); Banners are independent of that slot
+  since a banner is a persistent overlay, not a takeover.
+- **`CanShow(placementId)`** returns an `AdAvailabilityReason` (`Available`/`NotInitialized`/
+  `UnknownPlacement`/`NotLoaded`/`Cooldown`/`SessionLimitReached`/`SuppressedByEntitlement`) — the
+  framework's mechanism for "can this currently be shown," never a game policy like "every 3 levels"
+  (CLAUDE.md's Phase 15 brief, section 11). Cooldown/session-limit are authored per placement on
+  `AdPlacementConfig`; both are optional (0 = no limit).
+- **Rewarded ads never grant a reward on their own.** `ShowRewarded`'s callback receives a
+  `RewardedAdResult` (`RewardEarned`/`ClosedWithoutReward`/`NotAvailable`/`NotInitialized`/
+  `AlreadyShowing`/`SuppressedByPolicy`/`Failed`) — only `RewardEarned`, reported after
+  `IAdProvider.AdRewardEarned` actually fires (before `AdClosed`, never instead of it), should ever
+  cause a reward to be granted. `AdsService` itself never calls `Rewards.IRewardService` — see "Why
+  Ads and Purchases integrate with Rewards differently" below.
+- **Entitlement-based suppression** (`AdConfiguration.EntitlementSuppressions`,
+  `AdEntitlementSuppressionRule`) maps an owned `EntitlementId` to the specific `AdType`s it
+  suppresses. Remove Ads suppressing Banner/Interstitial but leaving Rewarded untouched is
+  *authored*, not hard-coded (CLAUDE.md's Phase 15 brief, section 20/21) — a rule can suppress any
+  combination, including Rewarded itself if a game wants that.
+- **Lifecycle**: `AdsService` subscribes to `Performance.Mobile.ApplicationPausedEvent`/
+  `ApplicationResumedEvent` through `IEventService` (not a hard dependency on
+  `IApplicationLifecycleService` itself — see [Architecture](#architecture)) to hide active banners
+  while backgrounded and restore them on resume, without a game needing to do anything.
+- **Retry**: a load failure schedules up to `AdConfiguration.MaxLoadRetries` retries through
+  `ITimerService`, backing off by `RetryBackoffSeconds * attemptNumber` each time.
+
+### Purchases
+
+- **`IPurchaseService`** (`PurchaseService`) — `Purchase(productId, onComplete)`/
+  `RestorePurchases(onComplete)`, keyed by a stable, logical `ProductId` (e.g. `"remove_ads"`), never
+  a store product id (mapped per-platform via `ProductDefinition.ResolvePlatformProductId`, held in
+  one `ProductCatalog` asset). `ProductType` is `Consumable`/`NonConsumable`/`Subscription`.
+- **Strongly typed results** — `PurchaseResultKind` (`Success`/`Cancelled`/`Failed`/`Pending`/
+  `Deferred`/`AlreadyOwned`/`Restored`/`NotAvailable`/`NotInitialized`/`ProductUnavailable`/
+  `ValidationFailed`), never a bare boolean. `Purchase`'s callback fires at least once — immediately
+  for a rejection this service can determine without the provider (`ProductUnavailable`/
+  `NotInitialized`/`AlreadyOwned`, the last one checked directly against `IEntitlementService` before
+  ever calling the provider) — and again later if the first outcome was `Pending`/`Deferred` and
+  `IPurchaseProvider.PurchaseUpdated` later reports how it resolved.
+- **Automatic grant on purchase/restore**: unlike Ads, a completed or restored purchase automatically
+  grants `ProductDefinition.GrantedEntitlementId` (via `IEntitlementService`) and/or
+  `GrantedRewardId` (via `Rewards.IRewardService.TryClaim`) — a product's grant is fixed, authored
+  data, not a gameplay-time decision, so there is no seam for a game to intercept it (CLAUDE.md's
+  Phase 15 brief, section 24). Both dependencies are resolved softly (`registry.TryGet`); a product
+  referencing one with the service unregistered logs a warning and simply skips that half of the
+  grant.
+- **Purchase idempotency (mandatory guarantee, explicitly scoped)**: every granted transaction id is
+  recorded in a persisted `HashSet<string>` (`PurchaseSaveData`, its own `IPersistenceService` key) —
+  a duplicate provider callback for the same transaction id reports the same outcome without granting
+  again, and this survives an ordinary application restart (see `IntegrationTests.ConsumablePurchase_GrantsReward_AndSurvivesSimulatedRestartWithoutDoubleGranting`).
+  This is **not** an atomic, crash-mid-write-safe transaction log — Phase 2's `IPersistenceService`
+  offers no such primitive, and `PurchaseSaveData`'s own remarks say so explicitly rather than
+  implying a stronger guarantee than the framework actually provides.
+- **`IPurchaseValidator`** (`LocalPurchaseValidator` is the only implementation shipped) is the
+  purchase validation *boundary*, not real security — see "Security boundary" below.
+- **Restore**: `IPurchaseProvider.RestorePurchases` reports which `ProductId`s the store currently
+  attributes to the player; `PurchaseService` grants each one under a `"restore:{productId}"` dedupe
+  key (a real per-product transaction id isn't guaranteed on restore) — restoring twice does not
+  double-grant, but note this also means a *legitimately* re-granted entitlement after a manual
+  revoke won't re-apply from the same restore call (a documented, accepted tradeoff for this phase's
+  scope, not a bug).
+
+### Entitlements
+
+- **`IEntitlementService`** (`EntitlementService`) — `HasEntitlement`/`GetEntitlement`/
+  `GrantEntitlement`/`RevokeEntitlement`/`SyncFromProvider`, persisted directly through
+  `IPersistenceService` (`EntitlementSaveData`, its own key) — the same pattern
+  `Rewards.RewardService`/`Unlocks.UnlockService` already use, deliberately **not** a `PlayerData`
+  profile section (a game wanting profile-scoped entitlements wraps this service's data in its own
+  `PlayerDataSection<TData>` adapter, the same non-retrofit precedent Phase 13 already established
+  for Settings/Economy/Inventory/Statistics/Tutorials).
+- **`EntitlementState`** carries `IsOwned` and, for a subscription, an optional `ExpirationUtc`/
+  `IsAutoRenewing`. `HasEntitlement` accounts for expiration (`IsCurrentlyActive`); `GetEntitlement`
+  does not — a lapsed subscription is "owned but not currently active," not "never owned," which
+  matters for a game that wants to show a "renew" prompt differently from a "buy" prompt.
+- **`SyncFromProvider`** reconciles cached state against a store restore/receipt re-check, tagging
+  every reported entry `EntitlementSource.Restored`. It never revokes an id the provider simply
+  didn't mention — a real store restore is non-exhaustive by nature (e.g. it does not re-list an
+  already-consumed consumable), so "not reported" is not the same claim as "not owned."
+
+### Why Ads and Purchases integrate with Rewards differently
+
+CLAUDE.md's Phase 15 brief draws this distinction explicitly (sections 8 vs. 24), and the
+implementation follows it exactly:
+
+- **Purchases → Rewards/Entitlements is automatic.** A product's grant is authored, fixed data (this
+  coin pack always grants this reward; this SKU always grants this entitlement) — there is nothing
+  for a game to decide at purchase-completion time, so `PurchaseService` calls `IRewardService.TryClaim`/
+  `IEntitlementService.GrantEntitlement` itself.
+- **Ads → Rewards is never automatic.** What a rewarded ad grants is frequently gameplay-contextual
+  (e.g. "double the coins from *this* level," not a fixed amount) — `AdsService` only ever reports
+  `RewardedAdResult.RewardEarned`/publishes `AdRewardEarnedEvent`; granting anything is left to the
+  game's own code, optionally through `Integration.AdPlacementRewardBridge` (an opt-in, not
+  bootstrapper-registered, 1:1 `AdPlacementId -> RewardId` adapter for the common case where the
+  mapping genuinely is fixed).
+
+### Provider status
+
+| Provider | Installed | Implemented |
+|---|---|---|
+| Google Mobile Ads | No | No — `IAdProvider` is ready; a future `GoogleMobileAdsProvider` in its own assembly (e.g. `GameFramework.Monetization.GoogleMobileAds`, referencing only that adapter's own code) would inspect whichever SDK version is actually installed and implement `IAdProvider` against its real API, never against APIs guessed ahead of time (CLAUDE.md's Phase 15 brief, section 29). |
+| Unity IAP (`com.unity.purchasing`) | No | No — `IPurchaseProvider` is ready; a future `UnityIapPurchaseProvider` in its own assembly would do the same against Unity IAP's real, installed API (section 30). |
+
+`Providers.Mock.MockAdProvider`/`MockPurchaseProvider` are this phase's only shipped implementations
+— deterministic, Editor/test-safe, and never able to accidentally grant a real purchase, since there
+is no real store underneath them. `MonetizationBootstrapper` registers them unconditionally; swapping
+in a real provider once an SDK is installed means changing that bootstrapper's two constructor
+arguments only — nothing in `AdsService`/`PurchaseService` changes.
+
+### Security boundary
+
+Client-side monetization/entitlement state is not inherently trustworthy — this phase does not
+implement server-side receipt validation, a cloud entitlement service, or any backend, and
+`IPurchaseValidator`/`LocalPurchaseValidator` make no claim to. They exist to establish the seam
+(local check today, a future server-backed implementation later) — see CLAUDE.md's Phase 15 brief,
+sections 22/50.
+
+### Bootstrap
+
+`MonetizationBootstrapper` extends `Rewards.ProgressionBootstrapper` (a real compile-time dependency
+on Rewards, the same reasoning `Quests.QuestsBootstrapper` already established), registering
+`IEntitlementService` before `IAdsService`/`IPurchaseService` — both resolve it softly during their
+own `Initialize`, which only succeeds once it is already registered and initialized.
+
+```csharp
+var ads = GameBootstrapper.Instance.Services.Get<IAdsService>();
+ads.Load(new AdPlacementId("RewardedRevive"));
+
+ads.ShowRewarded(new AdPlacementId("RewardedRevive"), result =>
+{
+    if (result == RewardedAdResult.RewardEarned)
+    {
+        var rewards = GameBootstrapper.Instance.Services.Get<IRewardService>();
+        rewards.TryClaim(new RewardId("Revive"));
+    }
+});
+
+var purchases = GameBootstrapper.Instance.Services.Get<IPurchaseService>();
+purchases.Purchase(new ProductId("remove_ads"), result =>
+{
+    // result.Kind == Success/AlreadyOwned/Cancelled/Failed/... - IEntitlementService is already
+    // updated by the time this callback fires for a Success/Restored/AlreadyOwned outcome.
+});
+
+var entitlements = GameBootstrapper.Instance.Services.Get<IEntitlementService>();
+if (entitlements.HasEntitlement(new EntitlementId("remove_ads")))
+{
+    // suppress interstitials in the game's own ad-request call sites too, if desired -
+    // IAdsService.CanShow already does this automatically for configured suppression rules.
+}
+```
+
+### Known limitations / non-goals
+
+Backend/server purchase validation, cloud entitlements, an analytics SDK, remote config,
+notifications, live ops, a subscription backend, a marketplace/trading system, a full Shop UI, and
+any game-specific monetization policy ("show an interstitial every 3 levels") are all explicitly out
+of scope for this phase (CLAUDE.md's Phase 15 brief, section 76) — `IPurchaseValidator`/
+`IAdsService.CanShow`/`AdPlacementRewardBridge` are the seams a game or a later phase would extend.
+No Google Mobile Ads or Unity IAP adapter exists because neither SDK is installed in this project
+(see "Provider status" above). No diagnostics UI was built beyond a menu-item log
+(`Editor.Monetization.MonetizationDiagnosticsMenu`), the same "not a game-facing UI framework"
+precedent `PlatformDiagnosticsMenu`/`PlayerDataDiagnosticsMenu` already established. Real ad-network/
+store SDK behavior (actual fill rates, real receipt formats, platform billing quirks) has not been
+verified against a real device or store — only the abstraction/orchestration layer and its mock
+providers have been tested.
+
+### Testing
+
+`GameFramework.Monetization.Tests` (EditMode) reuses the `TestRegistryFactory`/`TestDefinitions`
+pattern established since Phase 6, plus two fully-controllable test doubles
+(`FakeAdProvider`/`FakePurchaseProvider`, distinct from the shipped `MockAdProvider`/
+`MockPurchaseProvider`, which are covered in their own right by `MockProviderTests`) so
+multi-step scenarios (a fullscreen ad already showing, a duplicate transaction callback, a deferred
+purchase resolving later) are deterministic to set up. Covers: Ads initialization/load/show/hide,
+cooldown/session-limit policy, entitlement suppression (including "Rewarded is not suppressed unless
+explicitly configured"), rewarded success/failure/closed-without-reward/already-showing, load-retry
+backoff, and pause/resume banner hide/reshow; Purchases product loading, success/cancelled/failed/
+pending-then-resolved, already-owned short-circuiting the provider, validation failure, duplicate-
+transaction idempotency, and restore idempotency; Entitlements grant/revoke/expiration/sync/
+persistence round-trip; and integration flows (Remove Ads suppressing Banner/Interstitial but not
+Rewarded end-to-end across real `AdsService`+`PurchaseService`+`EntitlementService` instances, a
+consumable purchase's reward surviving a simulated application restart without double-granting, and
+`AdPlacementRewardBridge` claiming its mapped reward on `AdRewardEarnedEvent`). 53/53 Phase 15 tests
+pass; the full pre-existing suite (734 EditMode + 171 PlayMode tests as of Phase 14) still passes
+unchanged (787 EditMode + 171 PlayMode total after this phase).
+
 ## Roadmap
 
 Phase 3 deliberately did **not** include: Progression, Rewards, Currency, Inventory, Economy,
@@ -3964,13 +4227,25 @@ deep links beyond Android, thermal-state management, and any device-to-quality-p
 `IPermissionService`/`IAppStoreService`/the `Platform/Android` provider boundary are the seams a
 later phase or a game's own native integration would extend, not something this phase builds itself.
 
-Candidate next phases, based on the actual architecture after Phase 14 (none committed to yet): a
-first concrete game built on top of everything through Phase 14, which would likely surface real
-integration gaps (e.g. an actual GameFlow<->Navigation<->PlayerData bootstrap bridge beyond plain
-event mappings, a concrete need for `NavigationGuardResult.Defer` retry semantics, a genuine need for
-gamepad/keyboard UI focus navigation, or a UI-side safe-area component consuming Phase 14's
-`IScreenService`) faster than a fifteenth infrastructure-only phase would; or, if multi-profile saves
-for the existing Progression/Settings/Tutorial systems become a real requirement, a deliberate,
-explicitly-scoped migration of those six systems onto profile-scoped `IPersistenceService` keys (the
-known limitation Phase 13's own section calls out); or Ads/IAP/Analytics, the concerns Phase 14
-explicitly left for a dedicated later phase.
+Phase 15 — Monetization: Ads, IAP & Entitlements Framework. Done — see
+[Monetization Framework](#monetization-framework). Explicitly out of scope and left for later (see
+that section's own "Known limitations / non-goals"): backend/server purchase validation, cloud
+entitlements, an analytics SDK, remote config, notifications, live ops, a subscription backend, a
+marketplace/trading system, a full Shop UI, any game-specific monetization policy, and a real Google
+Mobile Ads/Unity IAP adapter (neither SDK is installed in this project) — `IAdProvider`/
+`IPurchaseProvider`/`IPurchaseValidator`/`AdPlacementRewardBridge` are the seams a game or a later
+phase would extend, not something this phase builds itself.
+
+Candidate next phases, based on the actual architecture after Phase 15 (none committed to yet):
+**Phase 16 — Analytics + Crash/Diagnostics Framework**, consuming the clean events Phase 15 already
+publishes (`PurchaseCompletedEvent`/`PurchaseFailedEvent`/`RestoreCompletedEvent`/`AdShownEvent`/
+`AdRewardEarnedEvent`/`EntitlementChangedEvent`, alongside the existing Phase 7-13 events) without
+coupling monetization to any analytics provider; a first concrete game built on top of everything
+through Phase 15, which would likely surface real integration gaps (e.g. an actual
+GameFlow<->Navigation<->PlayerData bootstrap bridge beyond plain event mappings, a concrete need for
+`NavigationGuardResult.Defer` retry semantics, a genuine need for gamepad/keyboard UI focus
+navigation, a UI-side safe-area component consuming Phase 14's `IScreenService`, or a real ad/IAP SDK
+adapter once one is installed) faster than a sixteenth infrastructure-only phase would; or, if
+multi-profile saves for the existing Progression/Settings/Tutorial systems become a real requirement,
+a deliberate, explicitly-scoped migration of those six systems onto profile-scoped
+`IPersistenceService` keys (the known limitation Phase 13's own section calls out).

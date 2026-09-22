@@ -1,0 +1,19 @@
+{
+    "name": "GameFramework.Monetization",
+    "rootNamespace": "GameFramework.Monetization",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Rewards",
+        "GameFramework.Performance"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
