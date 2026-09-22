@@ -2288,3 +2288,132 @@ the provider seam and deterministic mock providers exist.
   every other phase's services already follow. `Editor.Monetization.MonetizationDiagnosticsMenu` is
   the one place allowed to reach for `GameBootstrapper.Instance` (development-time-only, mirroring
   `PlatformDiagnosticsMenu`/`PlayerDataDiagnosticsMenu`'s existing precedent).
+
+---
+
+# 82. Phase 16 Analytics + Crash / Diagnostics Framework
+
+Phase 16 added `GameFramework.Analytics` — provider-independent analytics event tracking, session/
+screen tracking, consent, and anonymous identity — plus `GameFramework.Analytics.Diagnostics`
+(same assembly, separate namespace) — breadcrumbs, diagnostic context/tags, and a crash-reporting
+provider boundary. A third, optional assembly, `GameFramework.Analytics.Integration`, holds four
+opt-in bridges that forward GameFlow/UI Navigation/Tutorial/Monetization events into Analytics. Full
+API examples and design rationale live in `Assets/GameFramework/Documentation/Framework.md`'s
+"Analytics & Diagnostics Framework" section — this section is the stable rule summary; that one is
+the living reference. No analytics or crash-reporting SDK is installed in this project
+(`Packages/manifest.json` has neither Firebase, GameAnalytics, Unity Analytics, Sentry, nor
+Crashlytics) — only the two provider seams plus deterministic No-Op/Mock providers exist.
+
+## Analytics/Diagnostics Architecture
+
+* `GameFramework.Analytics` references only `GameFramework.Core`/`GameFramework.Runtime` plus
+  `GameFramework.Performance` (hard, for `ApplicationPausedEvent`/`ApplicationResumedEvent`/
+  `ApplicationQuittingEvent` — the same "subscribe directly, no game required to have Performance's
+  lifecycle service registered" pattern `Monetization.Ads.AdsService` already established) and
+  `GameFramework.Platform` (hard, for diagnostic device/platform context only). It must stay usable
+  by any game regardless of which other systems it also uses.
+* `GameFramework.Analytics.Integration` is a **separate, optional** assembly layered on top —
+  referencing `GameFramework.Analytics` + `GameFramework.GameFlow`/`GameFramework.UI.Navigation`/
+  `GameFramework.Tutorials`/`GameFramework.Monetization` — rather than pulling those four references
+  into the core Analytics assembly itself. This is deliberately different from how Presentation
+  (Phase 10) or UI Navigation (Phase 12) broke the minimal-sibling pattern: those integrations are
+  functionally required by the orchestration they perform, while GameFlow/Navigation/Tutorial/
+  Monetization integration is purely optional instrumentation a game may not want at all — the same
+  reasoning that gave Cinemachine (Phase 11) its own optional sibling assembly rather than making
+  `GameFramework.Cameras` itself depend on Cinemachine. A game that doesn't reference
+  `GameFramework.Analytics.Integration` still gets full Analytics/Diagnostics functionality.
+* Analytics ("what happened in the game?") and Diagnostics ("what went wrong technically?") are
+  deliberately two different interfaces (`IAnalyticsService`, `IDiagnosticsService`), not one giant
+  service — see this brief's own section 5. There is no separate `ICrashReportingService`; crash
+  reporting is a provider boundary (`ICrashReportingProvider`) that `IDiagnosticsService` forwards
+  to internally, matching this brief's own section 3 diagram exactly (`IDiagnosticsService` →
+  `ICrashReportingProvider` → external SDK) rather than adding a third public service interface for
+  no additional boundary value.
+* `AnalyticsBootstrapper` is a `GameBootstrapper` subclass (not a `PlayerSystemsBootstrapper`/
+  `ProgressionBootstrapper` subclass) — neither `AnalyticsService` nor `DiagnosticsService` has a
+  hard dependency on Input/UI/Rewards; both only require `IEventService`/`IPersistenceService`,
+  already part of the base eight services `GameBootstrapper` registers. Registers
+  `IDiagnosticsService` before `IAnalyticsService` — the latter resolves the former softly
+  (`registry.TryGet`) during its own `Initialize`.
+* Integration bridges (`Analytics.Integration.*AnalyticsIntegration`) are opt-in, plain `IDisposable`
+  C# classes — never registered by `AnalyticsBootstrapper` — the same "opt-in, not bootstrapper-
+  registered" precedent `Monetization.Integration.AdPlacementRewardBridge` already established. A
+  game constructs the ones it wants once every relevant service is registered, and disposes them on
+  shutdown. A bridge depends only on the *event types* it subscribes to (`IEventService.Subscribe<TEvent>`)
+  — never on the publishing service itself — so it works whether or not that service ends up
+  registered in a given game.
+
+## Analytics Rules
+
+* Game code calls `IAnalyticsService.Track(name, parameters)`. Never throws — an invalid event name
+  or unsupported parameter is logged and dropped/sanitized, never raised as an exception (section 82
+  — analytics must never crash the game). `AnalyticsService.SanitizeParameters`/`IsValidEventName`
+  are the one enforcement point; a provider adapter may still apply its own, stricter rules on top.
+* `AnalyticsEvent.Parameters` values are restricted to `string`/`int`/`long`/`float`/`double`/`bool`
+  — anything else is dropped with a single aggregated warning per `Track` call, not one per
+  parameter (avoids log spam — section 61). An event name must start with a letter and contain only
+  letters/digits/`_`, matching common provider conventions (e.g. Firebase).
+* Consent (`ConsentState`: `Unknown`/`Granted`/`Denied`) gates dispatch: `Denied` always drops
+  immediately, never buffers; `Unknown` buffers (bounded, drop-oldest) or drops per the configured
+  `ConsentPolicy`; `Granted` sends immediately. Denying consent after events were buffered clears the
+  buffer without ever sending it — privacy takes precedence over completeness (section 37). This
+  framework never builds a consent UI; a game's own UI/legal layer decides when to call
+  `SetConsent`.
+* Identity (`IAnalyticsService.UserId`) is an application-generated anonymous GUID persisted directly
+  via `IPersistenceService` (its own key, `"GameFramework.Analytics.Identity"`) — deliberately **not**
+  retrofitted onto a `PlayerData` profile section, the same non-retrofit precedent Phase 13/15
+  already established for their own self-persisting systems. Never a device id/advertising id/
+  hardware serial. `ResetIdentity()` is never called automatically by this framework.
+* Session lifecycle is built on `Performance.Mobile.ApplicationPausedEvent`/`ApplicationResumedEvent`/
+  `ApplicationQuittingEvent`, using wall-clock `DateTime.UtcNow` (not `Time.realtimeSinceStartup`,
+  which does not advance while a mobile process is genuinely suspended in the background) to measure
+  how long the app was backgrounded against `AnalyticsConfiguration.SessionTimeoutSeconds`. Do not
+  assume `ApplicationQuittingEvent` always fires on mobile — a process can be killed by the OS
+  without it; session-end there is best-effort, not guaranteed (section 16).
+* `TrackScreenView` is a thin wrapper over `Track(EventNames.ScreenView, ...)` with a `screen_name`
+  parameter — it takes a logical screen id, never a Unity scene name (section 18).
+
+## Diagnostics Rules
+
+* `IDiagnosticsService.RecordException`/`RecordError` always log through the existing
+  `Runtime.Diagnostics.Log` facade regardless of whether diagnostics/a crash provider is enabled —
+  the existing logger is never replaced (section 27). Only forwarded to `ICrashReportingProvider`
+  when `DiagnosticsConfiguration.Enabled` is true.
+* **No recursive diagnostics (mandatory, section 83):** `DiagnosticsService.Report`'s catch block
+  around `ICrashReportingProvider.Report` logs the failure only through the plain `Log` facade — it
+  never calls `RecordException`/`RecordError`/`Report` again. This is a structural guarantee (the
+  catch block simply doesn't contain such a call), not a runtime flag to reason about.
+* Breadcrumbs (`BreadcrumbRingBuffer`) are a fixed-capacity circular buffer
+  (`DiagnosticsConfiguration.BreadcrumbCapacity`, oldest dropped once full) — never an unbounded
+  list. Context (`SetContext`) and tags (`SetTag`) are plain `Dictionary<string,string>`, populated
+  from `Platform.IPlatformService`/`IDeviceInfoService` (resolved softly) plus whatever an
+  integration bridge or game sets.
+* `UnhandledExceptionDriver` is the **one** place in this framework that reads
+  `UnityEngine.Application.logMessageReceived` — do not add a second listener elsewhere. Its
+  re-entrancy flag exists because `RecordError` itself logs through `Log`, which re-invokes this same
+  callback synchronously; the flag makes that re-entrant call a no-op rather than recursing.
+* Do not collect device serial numbers, precise location, or advertising ids as diagnostic context —
+  only `framework_version`/`app_version`/`platform`/`device_model`/`operating_system` plus whatever a
+  game explicitly sets via `SetContext`/`SetTag` (section 32/56).
+
+## Provider Rules
+
+* `IAnalyticsProvider`/`ICrashReportingProvider` are the only two provider seams. No Firebase/
+  GameAnalytics/Unity Analytics/Sentry/Crashlytics adapter exists — do not fabricate one against
+  guessed APIs; a future adapter lives in its own assembly (e.g.
+  `GameFramework.Analytics.Firebase`), referencing only that installed SDK, implementing one of the
+  two provider interfaces against its real, installed API.
+* `NoOpAnalyticsProvider`/`NoOpCrashReportingProvider` are `AnalyticsBootstrapper`'s defaults — a
+  production build must not accidentally use `Providers.Mock.MockAnalyticsProvider`/
+  `Diagnostics.Mock.MockCrashReportingProvider` (section 54); the bootstrapper's two Mock-provider
+  inspector toggles exist for local development/testing only.
+* `AnalyticsService`/`DiagnosticsService` wrap every provider call in a try/catch; a provider
+  exception is caught, logged, and (for Analytics) reported through `IDiagnosticsService` as
+  `ErrorCategory.Framework` when one is registered — never allowed to propagate out of `Track`/
+  `RecordException`/etc.
+* Do not call `GameBootstrapper.Instance` from inside `GameFramework.Analytics`/
+  `GameFramework.Analytics.Integration` runtime code — every service is resolved through the
+  `IServiceRegistry` passed to `Initialize`/the bridge constructor, the same rule every other phase's
+  services already follow. `Editor.Analytics.AnalyticsDiagnosticsMenu`/`AnalyticsEventSimulatorWindow`
+  are the only places allowed to reach for `GameBootstrapper.Instance` (development-time-only,
+  mirroring `MonetizationDiagnosticsMenu`'s existing precedent).

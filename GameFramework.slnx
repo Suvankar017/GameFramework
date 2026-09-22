@@ -25,11 +25,13 @@
   <Project Path="GameFramework.GameFlow.csproj" />
   <Project Path="GameFramework.Quests.csproj" />
   <Project Path="GameFramework.PlayerSystems.csproj" />
+  <Project Path="GameFramework.Analytics.csproj" />
   <Project Path="GameFramework.Localization.csproj" />
   <Project Path="GameFramework.Samples.Phase12Demo.csproj" />
   <Project Path="GameFramework.Audio.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.csproj" />
   <Project Path="GameFramework.Cameras.Tests.csproj" />
+  <Project Path="GameFramework.Analytics.Tests.csproj" />
   <Project Path="GameFramework.Audio.Tests.csproj" />
   <Project Path="GameFramework.Monetization.csproj" />
   <Project Path="GameFramework.Performance.Tests.csproj" />
@@ -46,6 +48,7 @@
   <Project Path="GameFramework.Input.Tests.csproj" />
   <Project Path="GameFramework.Rewards.Tests.csproj" />
   <Project Path="GameFramework.Unlocks.csproj" />
+  <Project Path="GameFramework.Analytics.Integration.csproj" />
   <Project Path="GameFramework.PlayerData.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Core.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase9Demo.csproj" />

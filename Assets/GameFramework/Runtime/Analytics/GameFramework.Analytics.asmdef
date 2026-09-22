@@ -1,0 +1,19 @@
+{
+    "name": "GameFramework.Analytics",
+    "rootNamespace": "GameFramework.Analytics",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Performance",
+        "GameFramework.Platform"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

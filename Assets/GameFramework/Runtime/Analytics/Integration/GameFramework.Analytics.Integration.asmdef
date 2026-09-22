@@ -1,0 +1,23 @@
+{
+    "name": "GameFramework.Analytics.Integration",
+    "rootNamespace": "GameFramework.Analytics.Integration",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Analytics",
+        "GameFramework.GameFlow",
+        "GameFramework.UI",
+        "GameFramework.UI.Navigation",
+        "GameFramework.Tutorials",
+        "GameFramework.Monetization"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

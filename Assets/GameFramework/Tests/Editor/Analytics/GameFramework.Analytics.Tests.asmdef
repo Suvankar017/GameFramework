@@ -1,0 +1,33 @@
+{
+    "name": "GameFramework.Analytics.Tests",
+    "rootNamespace": "GameFramework.Analytics.Tests",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Performance",
+        "GameFramework.Platform",
+        "GameFramework.Analytics",
+        "GameFramework.Analytics.Integration",
+        "GameFramework.GameFlow",
+        "GameFramework.UI.Navigation",
+        "GameFramework.Tutorials",
+        "GameFramework.Monetization",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

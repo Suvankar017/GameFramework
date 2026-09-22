@@ -85,3 +85,9 @@ using System.Runtime.CompilerServices;
 // PersistenceService-over-InMemoryPersistenceStorage) for testing AdsService/PurchaseService/
 // EntitlementService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.Monetization.Tests")]
+
+// Phase 16 analytics test assembly reuses the same pattern to build a minimal, already-initialized
+// ServiceRegistry (a real EventService/PersistenceService-over-InMemoryPersistenceStorage - neither
+// AnalyticsService nor DiagnosticsService needs a fake ITimeService, since session timing uses
+// wall-clock DateTime.UtcNow directly) for testing AnalyticsService/DiagnosticsService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.Analytics.Tests")]
