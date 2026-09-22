@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 12 — UI Navigation & Menu Flow Framework**, on top of:
+**Phase 13 — Save Profiles & Player Data Framework**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -71,6 +71,18 @@ that most games need, without any game-specific content.
   optional enter-transition coroutine hooks, and centralized Android/back-button routing. It never
   duplicates Phase 3's screen/popup instantiation, destruction, or layered-canvas machinery - every
   screen/popup it manages is still opened/closed exclusively through `IUIService`.
+- **Phase 13** — a player-profile and player-data orchestration layer on top of Phase 2's
+  `IPersistenceService`: one registered `IPlayerProfileService` owns profile identity/lifecycle
+  (create/load/unload/switch/delete, a convenience default profile), modular `PlayerDataSection<TData>`
+  data sections a game registers itself (dirty-tracked, independently versioned/migratable, each its
+  own already-existing `IPersistenceService` key), autosave composed from
+  `ApplicationPause`/`FocusLost`/`SceneTransition`/`ProfileUnload`/debounced-dirty triggers (built on
+  Phase 2's `ITimerService`, not a new update loop), and corruption/backup recovery (a `.bak`
+  companion key per section, restored automatically if the primary fails to load) - all without
+  introducing a second storage/serialization system. References only Core/Runtime, so it stays usable
+  by any game regardless of which other phases it also uses; does not retrofit Phase 3/6/9's six
+  existing self-persisting systems (Settings/Economy/Inventory/Experience/Statistics/Tutorials) onto
+  profile-scoped keys — see `Framework.md`'s Phase 13 section for that known limitation.
 
 No player character, enemy AI, weapons, ads, analytics, IAP, remote config, or multiplayer exists
 yet, and no concrete currency/item/level/unlock/reward/quest/achievement/tutorial-content/feedback-
@@ -451,6 +463,25 @@ Full per-assembly reference tables and namespace listings live in
   handlers; a legitimate follow-up call from a hook must be deferred one frame (see the sample).
   Popups can optionally acquire a `GameFlow.IPauseToken` for as long as they're open, released
   automatically on close, resolved softly so this works with or without GameFlow registered.
+- **Save Profiles & Player Data** (`IPlayerProfileService`, Phase 13) — orchestrates Phase 2's
+  `IPersistenceService` rather than duplicating storage/serialization: `RegisterSection<TSection>`
+  registers a factory for a game's own `PlayerDataSection<TData>` subclass (each with a stable id,
+  independent schema version, and its own `Validate`); `CreateProfile`/`LoadProfile`/
+  `LoadDefaultProfile`/`SwitchProfile`/`UnloadActiveProfile`/`DeleteProfile` never throw, returning a
+  `ProfileOperationResult` instead, and reject a concurrent call with `AlreadyActive` rather than
+  queuing it. Each section's data is its own `"GameFramework.PlayerData.{profileId}.{sectionId}"`
+  persistence key, so Phase 2's existing versioning/migration machinery applies per section with no
+  new envelope format; `RegisterMigration(sectionId, migration)` is queued and forwarded to the
+  concrete key the first time a profile using that section loads. Autosave composes
+  `ApplicationPause`/`FocusLost`/`SceneTransition`/`ProfileUnload`/debounced-dirty triggers
+  (`AutosavePolicy`) — the debounce timer coalesces rapid mutations into one write via `ITimerService`,
+  never a new update loop; mobile pause/focus/quit are forwarded by a private
+  `PlayerDataLifecycleDriver`, deliberately independent of Phase 5's `IApplicationLifecycleService` so
+  a game doesn't need all of Performance just for autosave. Before overwriting a section, its
+  currently-stored data is copied to a `.bak` companion key; on load, a genuine deserialize failure
+  (detected the same way `PersistenceServiceTests` already verifies Phase 2's own `.corrupt` marker
+  behavior) triggers a `.bak` restore attempt, then falls back to that section's defaults — the
+  profile still loads (`ProfileOperationResultKind.Corrupted`), nothing is silently destroyed.
 
 Complete API examples, edge cases, and design rationale for every system are documented in
 `Assets/GameFramework/Documentation/Framework.md` — treat that file as the authoritative reference.
@@ -606,6 +637,22 @@ Complete API examples, edge cases, and design rationale for every system are doc
   Selection's original callback; a nested Settings → Confirm popup stack closed topmost-first on
   successive `NavigateBack()` calls, leaving Main Menu untouched throughout; and `NavigateBack()` at
   the root published `BackRequestedAtRootEvent` as expected. Zero console errors/warnings throughout.
+- Phase 13: `GameFramework.PlayerData.Tests` (EditMode) reuses the same `TestRegistryFactory` pattern
+  with a fake `ITimeService` plus real `EventService`/`TimerService`/`PersistenceService`-over-
+  `InMemoryPersistenceStorage`. Covers profile create/load/unload/switch/delete/default-profile and
+  every `ProfileOperationResultKind`, section registration (duplicate type/id, locked out once a
+  profile is active), dirty tracking/`Validate` call points, save/load round-tripping, migration
+  forwarding to a profile's concrete key (including a section added in a later build loading cleanly
+  at defaults), corruption detection and `.bak` recovery across two independent
+  `PlayerProfileService` instances sharing one `InMemoryPersistenceStorage` (simulating an
+  application restart), a `Validate`-throwing section's save failure staying isolated from a healthy
+  section's, debounced/coalesced autosave driven through a real `TimerService.Tick()`, and event
+  ordering (`IEventService` publishes plus the mirrored direct C# events). `GameFramework.
+  PlayerData.Tests.Runtime` (PlayMode) covers `PlayerDataBootstrapper` reaching `Ready` alongside the
+  base eight services and the simulated application-pause flush (Unity doesn't allow a test to invoke
+  `OnApplicationPause` directly, so this calls the same internal handler `PlayerDataLifecycleDriver`
+  forwards to). 51/51 Phase 13 tests pass (45 EditMode + 6 PlayMode); the full project suite (734
+  EditMode + 135 PlayMode tests) was re-run after this phase with zero regressions.
 
 ## Packages / Dependencies
 
@@ -626,19 +673,21 @@ Assets/GameFramework/
 │                        State, SceneManagement, Time, Timers, Events, Persistence, Settings,
 │                        Input, Localization, Audio, Feedback, UI, PlayerSystems, Gameplay,
 │                        Performance, Progression, Unlocks, Rewards, Quests, GameFlow, Tutorials,
-│                        Presentation, Cameras); Cameras/Integration/Cinemachine/ holds the optional
-│                        GameFramework.Cameras.Cinemachine assembly; UI/Navigation/ holds the
-│                        GameFramework.UI.Navigation assembly (Phase 12)
+│                        Presentation, Cameras, PlayerData); Cameras/Integration/Cinemachine/ holds
+│                        the optional GameFramework.Cameras.Cinemachine assembly; UI/Navigation/
+│                        holds the GameFramework.UI.Navigation assembly (Phase 12); PlayerData/
+│                        holds the GameFramework.PlayerData assembly (Phase 13)
 ├── Editor/              Editor-only tooling (Localization, Gameplay config, Quest content,
-│                        Tutorial content, Feedback content, Camera Configuration, and UI Navigation
-│                        Catalog validators); Cameras/Cinemachine/ holds the optional
-│                        .Cinemachine.Editor assembly
+│                        Tutorial content, Feedback content, Camera Configuration, UI Navigation
+│                        Catalog, and Player Data diagnostics); Cameras/Cinemachine/ holds the
+│                        optional .Cinemachine.Editor assembly
 ├── Samples/              Phase0Demo/ … Phase4Demo/ (one per phase), Phase5Benchmark/,
 │                         Phase6Demo/, Phase7Demo/, Phase9Demo/, Phase10Demo/, Phase11Demo/, Phase12Demo/
 │                         (each with authored Content/ ScriptableObject/prefab assets; Phase11Demo/
 │                         additionally has a second scene, Phase11CinemachineDemo.unity, for the
-│                         Cinemachine integration) — Phase 8 intentionally has no sample yet (see
-│                         Framework.md's Phase 8 section for why)
+│                         Cinemachine integration) — Phase 8 and Phase 13 intentionally have no sample
+│                         yet (Phase 8: see Framework.md's Phase 8 section for why; Phase 13: its
+│                         infrastructure is fully exercised by its own test suite instead)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```

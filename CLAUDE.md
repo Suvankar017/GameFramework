@@ -1988,3 +1988,98 @@ reference.
   synchronously, so there is no seam to defer that destruction for an exit animation. Play an exit
   animation synchronously inside `UIScreen.OnClosed`/`OnHidden` instead of asking for an exit-transition
   hook here.
+
+---
+
+# 79. Phase 13 Save Profiles & Player Data Framework
+
+Phase 13 added `GameFramework.PlayerData` — a player-profile and player-data orchestration layer on
+top of Phase 2's `Runtime.Persistence.IPersistenceService`, not a second storage/serialization
+system. Full API examples and design rationale live in
+`Assets/GameFramework/Documentation/Framework.md`'s "Save Profiles & Player Data Framework" section —
+this section is the stable rule summary; that one is the living reference.
+
+## Player Data Architecture
+
+* `GameFramework.PlayerData` references only `GameFramework.Core`/`GameFramework.Runtime` — never
+  Input/UI/Audio/Feedback/Gameplay/GameFlow/Progression/Navigation/Performance. Every dependency
+  `PlayerProfileService` needs (`IPersistenceService`, `IEventService`, `ITimerService`, optionally
+  `ISceneService`/`ILoggingService`) is already part of the base eight services `GameBootstrapper`
+  registers, so it must stay usable by any game regardless of which other systems it also uses.
+* `IPlayerProfileService` is registered by `PlayerDataBootstrapper`, a `GameBootstrapper` subclass —
+  not a `PlayerSystemsBootstrapper` subclass — since it has no hard dependency on Input/UI. Do not
+  register it from a subclass that requires Phase 3 just to satisfy a dependency it doesn't have.
+* Every section's data is its own `IPersistenceService` key
+  (`"GameFramework.PlayerData.{profileId}.{sectionId}"`); a profile's metadata is a sibling key
+  (`"...{profileId}.Meta"`); the list of existing profile ids is tracked under
+  `"GameFramework.PlayerData.Index"`. Do not invent a second envelope/versioning format — every key
+  still goes through Phase 2's existing `Save`/`Load`/`RegisterMigration`.
+* `SettingsService`/`EconomyService`/`InventoryService`/`ExperienceService`/`StatisticsService`/
+  `TutorialService` are **not** retrofitted onto profile-scoped keys — each already persists itself
+  against a fixed, non-profile-scoped key, and changing that would silently move every existing
+  game's save data. A game that wants one of those six systems' data inside a profile wraps it in its
+  own `PlayerDataSection<TData>` adapter; do not modify those six services to do this automatically.
+
+## Section Rules
+
+* A game defines persistent data by subclassing `PlayerDataSection<TData>`, never by implementing
+  `IPlayerDataSection` directly unless there is a concrete reason `PlayerDataSection<TData>`'s
+  Save/Load/dirty-tracking/backup implementation doesn't fit.
+* Call `MarkDirty()` from inside a section's own domain mutator only after the mutation actually
+  changed something — a no-op mutator call must not mark dirty, since that would schedule/reschedule
+  an unnecessary autosave.
+* `Validate()` should repair whatever it safely can in place (clamp, drop a dangling reference).
+  Throwing from it is reserved for state the section genuinely cannot make sense of — that is treated
+  as corruption (`ProfileOperationResultKind.Corrupted`) during load, and skips that section's write
+  (keeping it dirty for a retry) during save, rather than persisting or accepting bad data.
+* `RegisterSection`/`RegisterMigration` must be called before any profile is loaded. Do not call
+  either after `IPlayerProfileService.ActiveProfile` is non-null — both throw
+  `InvalidOperationException` deliberately, the same "composition-root mistake, not a recoverable
+  runtime condition" reasoning `IPersistenceService.RegisterMigration`'s duplicate-registration throw
+  already establishes.
+
+## Lifecycle and Concurrency Rules
+
+* Every `IPlayerProfileService` command returns a `ProfileOperationResult` instead of throwing, and
+  is rejected with `ProfileOperationResultKind.AlreadyActive` while another is in progress — including
+  a call issued synchronously from inside this service's own event handlers. Defer such a follow-up
+  call by one frame (a coroutine, or an `ITimerService` one-shot) instead of calling back in directly
+  — the same re-entrancy rule `INavigationService` already documents.
+* `ProfileState.Saving` always returns to `Loaded` regardless of the save's outcome. Do not add a
+  separate stuck "SaveFailed" state — a failed save is reported through `LastSaveResult`/
+  `ProfileSaveFailed`, never by blocking further use of the profile.
+* Do not read `Application.OnApplicationPause`/`OnApplicationFocus`/`OnApplicationQuit` anywhere in
+  Player Data code outside `PlayerDataLifecycleDriver` — that is the one centralized place this
+  layer reads those callbacks. This driver is deliberately independent of
+  `Performance.Mobile.IApplicationLifecycleService` (see its own remarks) — do not add a reference to
+  `GameFramework.Performance` to "reuse" that service instead; that would force every Player Data user
+  to pull in Performance's entire surface just for pause detection.
+* Autosave scheduling goes through `Runtime.Timers.ITimerService` (unscaled, so it still counts down
+  while gameplay is paused). Do not add an `Update()`/polling loop to check dirty state — a section
+  notifies the service the instant it is marked dirty via an internal hook, never by being polled.
+* A dirty-driven autosave request coalesces with any already-pending one (cancel-and-reschedule) —
+  it does not queue a second save. Do not change this to a queue without a concrete reason; rapid
+  mutations (a burst of coin pickups) must still produce one write, not several.
+
+## Corruption / Backup Rules
+
+* `EnableBackups` (on by default) copies a section's current on-disk data to a `.bak` companion key
+  immediately before overwriting it during save — one extra load+save per dirty section per save
+  cycle, never per mutation. Do not call this per mutation or per frame.
+* On load, corruption detection relies on deleting any stale `.corrupt` marker for a key before
+  calling `IPersistenceService.Load`, then checking whether a new one appears — `PersistenceService`
+  only creates that marker when a load actually failed. Do not skip the delete-before-check step; a
+  marker left over from a previous failed attempt would otherwise cause a load that succeeds this
+  time to still be reported as corrupted.
+* A failed section tries its own `.bak` first, then falls back to `ResetToDefaults()` — the profile
+  still loads (`Corrupted`, not a hard failure). Never leave a section half-loaded, and never treat a
+  corrupted section as a reason to fail the entire profile load.
+* A missing migration chain (`IPersistenceService.Load` logging "no migration registered" and
+  returning defaults) is a content/authoring bug to catch by keeping migrations registered for every
+  shipped version — it is not distinguishable from "no save yet" through Phase 2's current public
+  surface, and no additive Phase 2 API change was made to fix that; do not assume this layer detects
+  it the same way it detects a genuine deserialize failure.
+* A profile save is not multi-file-transactional — one section's `Save`/`Validate` failure does not
+  roll back a different section's already-written data (Phase 2 has no multi-key transaction
+  primitive). Do not build one for this; log, isolate, and report `ProfileOperationResultKind.Failed`
+  with the affected section ids instead.

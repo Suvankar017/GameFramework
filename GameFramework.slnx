@@ -1,4 +1,5 @@
 ﻿<Solution>
+  <Project Path="GameFramework.PlayerData.csproj" />
   <Project Path="GameFramework.UI.csproj" />
   <Project Path="GameFramework.Runtime.csproj" />
   <Project Path="GameFramework.GameFlow.Tests.csproj" />
@@ -17,6 +18,7 @@
   <Project Path="GameFramework.Samples.Phase4Demo.csproj" />
   <Project Path="GameFramework.Tutorials.csproj" />
   <Project Path="GameFramework.Input.csproj" />
+  <Project Path="GameFramework.PlayerData.Tests.csproj" />
   <Project Path="GameFramework.Presentation.csproj" />
   <Project Path="GameFramework.Cameras.csproj" />
   <Project Path="GameFramework.GameFlow.csproj" />
@@ -40,6 +42,7 @@
   <Project Path="GameFramework.Input.Tests.csproj" />
   <Project Path="GameFramework.Rewards.Tests.csproj" />
   <Project Path="GameFramework.Unlocks.csproj" />
+  <Project Path="GameFramework.PlayerData.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Core.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase9Demo.csproj" />
   <Project Path="GameFramework.Cameras.Cinemachine.Editor.csproj" />

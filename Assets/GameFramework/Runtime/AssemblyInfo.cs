@@ -73,3 +73,9 @@ using System.Runtime.CompilerServices;
 // already-initialized ServiceRegistry (a real UIService/EventService, fake IInputService/
 // IGameFlowService) for testing NavigationService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.UI.Navigation.Tests.Runtime")]
+
+// Phase 13 player-data test assemblies reuse the same pattern to build a minimal,
+// already-initialized ServiceRegistry (fake ITimeService, a real EventService/TimerService/
+// PersistenceService-over-InMemoryPersistenceStorage) for testing PlayerProfileService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.PlayerData.Tests")]
+[assembly: InternalsVisibleTo("GameFramework.PlayerData.Tests.Runtime")]

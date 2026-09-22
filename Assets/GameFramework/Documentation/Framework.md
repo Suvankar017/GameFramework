@@ -404,11 +404,12 @@ Assets/GameFramework/
 | `GameFramework.Presentation` | `Runtime/Presentation` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Audio`, `GameFramework.Feedback`, `GameFramework.Gameplay`, `GameFramework.Performance`, `GameFramework.UI` (every dependency resolved *softly* at runtime — see [Architecture](#architecture)) | Coordinated feedback/presentation orchestration: `FeedbackDefinition` bundles Audio/Haptic/Camera/Visual/Screen/UI/Time channels behind one `IPresentationService.Play` call (Phase 10). Composition root: `PresentationBootstrapper`. |
 | `GameFramework.Cameras` | `Runtime/Cameras` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance` (sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials` — no Input/UI/Audio/Feedback/Gameplay/Presentation reference either direction) | Camera orchestration: `ICameraService` (registration, base activation, override stack), `ICameraMode` (Follow/Static/TargetLook/Manual), world bounds, damped zoom, transitions (Phase 11). Composition root: `CameraBootstrapper`. |
 | `GameFramework.Cameras.Cinemachine` | `Runtime/Cameras/Integration/Cinemachine` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Performance`, `GameFramework.Cameras`, `Cinemachine` (the only assembly in the framework that references it) | Optional alternative driver for `ICameraService`/`CameraController`, backed by a real `CinemachineVirtualCamera`/`CinemachineBrain` instead of `CameraDriver`'s pure-C# pipeline (Phase 11). No composition root/service of its own — plain scene composition (`CinemachineCameraAdapter` + `CinemachineCameraBackend`). |
-| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials`, `GameFramework.Presentation`, `GameFramework.Audio`, `GameFramework.Cameras` | Editor-only. Localization table, Gameplay config, Quest content, Tutorial content, Feedback content, and Camera Configuration validation menu items. |
+| `GameFramework.Editor` | `Editor/` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Localization`, `GameFramework.Gameplay`, `GameFramework.Progression`, `GameFramework.Unlocks`, `GameFramework.Rewards`, `GameFramework.Quests`, `GameFramework.Tutorials`, `GameFramework.Presentation`, `GameFramework.Audio`, `GameFramework.Cameras`, `GameFramework.UI`, `GameFramework.UI.Navigation`, `GameFramework.PlayerData` | Editor-only. Localization table, Gameplay config, Quest content, Tutorial content, Feedback content, Camera Configuration, UI Navigation catalog validation menu items, and Player Data diagnostics. |
 | `GameFramework.Cameras.Cinemachine.Editor` | `Editor/Cameras/Cinemachine` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.Cameras`, `GameFramework.Cameras.Cinemachine`, `Cinemachine` | Editor-only, separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. Validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend, duplicate controller ownership, an assigned Confiner with nothing to confine against). |
 | `GameFramework.UI.Navigation` | `Runtime/UI/Navigation` | `GameFramework.Core`, `GameFramework.Runtime`, `GameFramework.UI` (hard), `GameFramework.Input`, `GameFramework.GameFlow` (both soft, resolved via `registry.TryGet`), `GameFramework.PlayerSystems` (only for `NavigationBootstrapper` to subclass `PlayerSystemsBootstrapper`) | UI navigation/menu-flow orchestration on top of Phase 3's `IUIService`: stable-id screen/popup registration, a navigation stack independent of Unity's scene history, back-navigation priority, typed parameters/results, guards, and centralized Android/back-button routing (Phase 12). Composition root: `NavigationBootstrapper`. |
-| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` / `.Presentation.Tests` / `.Cameras.Tests` / `.Cameras.Cinemachine.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
-| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` / `.Presentation.Tests.Runtime` / `.Cameras.Tests.Runtime` / `.Cameras.Cinemachine.Tests.Runtime` / `.UI.Navigation.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here; Phase 10's visual-effect spawning, since `UnityEngine.Object.Destroy` is refused outside Play Mode; Phase 11's `CameraDriver.LateUpdate` actually firing, since EditMode never runs the player loop; the Cinemachine integration's activation/target/zoom/confiner wiring against a real `CinemachineBrain`/`CinemachineVirtualCamera`; Phase 12's `NavigationService` orchestrating real `UIScreen`/`UIPopup` instances). |
+| `GameFramework.PlayerData` | `Runtime/PlayerData` | `GameFramework.Core`, `GameFramework.Runtime` (sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras` — no Input/UI/Audio/Feedback/Gameplay/GameFlow/Progression/Navigation reference) | Player-profile and player-data orchestration on top of Phase 2's `IPersistenceService`: profiles, modular sections, dirty tracking, autosave/debounce, migration forwarding, corruption/backup recovery (Phase 13). Composition root: `PlayerDataBootstrapper`. |
+| `GameFramework.Input.Tests` / `.Localization.Tests` / `.Audio.Tests` / `.Feedback.Tests` / `.Gameplay.Tests` / `.Performance.Tests` / `.Progression.Tests` / `.Unlocks.Tests` / `.Rewards.Tests` / `.Quests.Tests` / `.GameFlow.Tests` / `.Tutorials.Tests` / `.Presentation.Tests` / `.Cameras.Tests` / `.Cameras.Cinemachine.Tests` / `.PlayerData.Tests` | `Tests/Editor/<System>` | matching runtime assembly + Core/Runtime, TestRunner | EditMode tests for each system's pure logic. |
+| `GameFramework.Audio.Tests.Runtime` / `.UI.Tests.Runtime` / `.PlayerSystems.Tests.Runtime` / `.Gameplay.Tests.Runtime` / `.Presentation.Tests.Runtime` / `.Cameras.Tests.Runtime` / `.Cameras.Cinemachine.Tests.Runtime` / `.UI.Navigation.Tests.Runtime` / `.PlayerData.Tests.Runtime` | `Tests/Runtime/<System>` | matching runtime assembly + Core/Runtime, TestRunner | PlayMode tests for behavior that genuinely needs a running engine (real `AudioSource` playback, `AddComponent`-able UI test doubles, `GameBootstrapper.Awake`, real GameObject pooling/physics, Phase 5 pool-hardening additions live alongside the Phase 4 pooling tests here; Phase 10's visual-effect spawning, since `UnityEngine.Object.Destroy` is refused outside Play Mode; Phase 11's `CameraDriver.LateUpdate` actually firing, since EditMode never runs the player loop; the Cinemachine integration's activation/target/zoom/confiner wiring against a real `CinemachineBrain`/`CinemachineVirtualCamera`; Phase 12's `NavigationService` orchestrating real `UIScreen`/`UIPopup` instances; Phase 13's `PlayerDataBootstrapper`/`PlayerDataLifecycleDriver` needing real `Awake`/`DontDestroyOnLoad`). |
 
 Phase 2 added no new assembly (its five modules share no dependency boundary worth enforcing).
 Phase 3 is the opposite case: UI's dependency on Localization/Audio/Feedback (and Feedback's on
@@ -495,6 +496,20 @@ tooling (`UINavigationCatalogValidator`) lives in the shared `GameFramework.Edit
 than a separate one, since (unlike the Cinemachine integration) it introduces no third-party package
 dependency that assembly needs to stay free of.
 
+Phase 13 gets exactly one new assembly, `GameFramework.PlayerData`, going back to the *minimal*
+sibling shape Phase 9/11 established rather than Phase 10's/12's wider ones: its internal pieces
+(profile/section abstractions, the lifecycle driver, the bootstrapper) share no dependency boundary
+worth enforcing against each other, so they stay namespaces within one assembly. It references only
+Core/Runtime — even less than Phase 9's Tutorials (which additionally needs Input) — because every
+service `PlayerProfileService` depends on (`IPersistenceService`, `IEventService`, `ITimerService`,
+optionally `ISceneService`/`ILoggingService`) is already part of the base eight services
+`GameBootstrapper` itself registers; it has no reference on Performance either, despite needing
+mobile-pause detection, specifically so a game doesn't have to pull in Performance's entire
+profiling/tick/pooling surface just for autosave (see
+[Save Profiles & Player Data Framework](#save-profiles--player-data-framework)). Its editor tooling
+(`PlayerDataDiagnosticsMenu`) lives in the shared `GameFramework.Editor` assembly, the same reasoning
+Phase 12's `UINavigationCatalogValidator` placement already established.
+
 ## Namespace conventions
 
 Block-style namespaces only, never file-scoped. Current namespaces:
@@ -544,6 +559,8 @@ Block-style namespaces only, never file-scoped. Current namespaces:
 - `GameFramework.Editor.Cameras.CinemachineIntegration` — `CinemachineCameraSetupValidator` (Editor-only, optional).
 - `GameFramework.UI.Navigation` — `UIScreenId`, `UIPopupId`, `NavigationMode`, `NavigationResultKind`, `NavigationResult`, `NavigationRequestOptions`, `IUINavigationParameterReceiver`, `IUINavigationBackHandler`, `IUINavigationTransitionHandler`, `INavigationGuard`, `NavigationGuardResult`, `NavigationGuardContext`, `INavigationService`, `NavigationService`, `NavigationBootstrapper`, `NavigationDiagnosticsSnapshot`, the `*Event` structs (`ScreenNavigatedEvent`/`PopupOpenedEvent`/`PopupClosedEvent`/`BackRequestedAtRootEvent`/`NavigationBlockedEvent`), `UIScreenRegistry`/`UIPopupRegistry`/`NavigationEntry`/`PopupEntry`/`NavigationCoroutineRunner`/`NavigationBackButtonDriver` (all internal), and `UINavigationCatalog`/`UINavigationScreenEntry`/`UINavigationPopupEntry` (optional ScriptableObject-based bulk registration).
 - `GameFramework.Editor.UI.Navigation` — `UINavigationCatalogValidator` (Editor-only).
+- `GameFramework.PlayerData` — `ProfileId`, `ProfileState`, `ProfileOperationResultKind`, `ProfileOperationResult`, `AutosaveTriggers`, `AutosavePolicy`, `IPlayerDataSection`, `PlayerDataSection<TData>`, `IDirtyNotifyingSection` (internal), `PlayerProfile`, `PlayerProfileMetadata` (internal), `PlayerProfileInfo`, `PlayerProfileIndexData` (internal), `PlayerProfileDiagnostics`, `IPlayerProfileService`, `PlayerProfileService`, `PlayerDataLifecycleDriver` (internal), `PlayerDataBootstrapper`, and the `*Event` structs listed under [Save Profiles & Player Data Framework](#save-profiles--player-data-framework).
+- `GameFramework.Editor.PlayerData` — `PlayerDataDiagnosticsMenu` (Editor-only).
 
 A naming note: `GameFramework.Runtime.Time` and `GameFramework.Runtime.Timers` share a word with
 `UnityEngine.Time`/nothing, respectively, but that hasn't caused the ambiguity you might expect —
@@ -3293,6 +3310,23 @@ shape; Confiner2D's own extent handling is unaffected by this integration either
   stack) returned `NavigationResultKind.NotFound` and was observed to actually publish
   `BackRequestedAtRootEvent` (subscribed from the verification code itself). Zero console
   errors/warnings across the whole verification session.
+- **Phase 13.** `GameFramework.PlayerData.Tests` (EditMode, 45 tests) covers profile
+  create/load/unload/switch/delete/default-profile, `AlreadyExists`/`NotFound`/`InvalidState`/
+  `AlreadyActive` result handling, section registration (duplicate type/id rejection, registration
+  locked out once a profile is active), dirty tracking and `Validate` call points, save/load
+  round-tripping, migration forwarding to a profile's concrete key (including a section added in a
+  later build loading cleanly at defaults), corruption detection and `.bak` recovery across two
+  independent `PlayerProfileService` instances sharing one `InMemoryPersistenceStorage` (simulating
+  an application restart), a `Validate`-throwing section's save failure staying isolated from a
+  healthy section's, debounced/coalesced autosave driven through a real `TimerService.Tick()` with a
+  fake `ITimeService`, `ApplicationPause`/`FocusLost`/`ApplicationQuit` trigger flags, and event
+  ordering (both `IEventService` publishes and the mirrored direct C# events). `GameFramework.
+  PlayerData.Tests.Runtime` (PlayMode, 6 tests) covers `PlayerDataBootstrapper` reaching `Ready`
+  alongside the base eight services, section registration/`LoadDefaultProfile` end-to-end, and the
+  simulated application-pause flush (Unity does not allow a test to invoke `OnApplicationPause`
+  directly, so this calls the same internal handler `PlayerDataLifecycleDriver` forwards to). All
+  51/51 Phase 13 tests pass; the full project suite (734 EditMode + 135 PlayMode tests project-wide)
+  was re-run after this phase with zero regressions.
 
 ## Phase 0 — Core utilities
 
@@ -3491,6 +3525,166 @@ simulation is not available through that tooling (the same limitation Phase 11's
 verification notes) - every step above was observed to produce the expected `CurrentScreenId`/
 `CurrentPopupId`/`CanNavigateBack` state and console log after each click.
 
+## Save Profiles & Player Data Framework
+
+`GameFramework.PlayerData` is the save-slot/profile layer this roadmap flagged as a candidate after
+Phase 12: a player-profile and player-data orchestration layer on top of Phase 2's
+`Runtime.Persistence.IPersistenceService`, not a replacement for it.
+
+```text
+Game Feature
+      ↓
+Player Data section (a game's own PlayerDataSection<TData> subclass)
+      ↓
+PlayerProfile (one profile's section instances)
+      ↓
+PlayerProfileService (lifecycle/dirty-tracking/autosave orchestration)
+      ↓
+IPersistenceService  →  IPersistenceSerializer  →  IPersistenceStorage
+```
+
+Like `GameFramework.Performance`, this assembly references only `GameFramework.Core`/
+`GameFramework.Runtime` - never Input/UI/Audio/Feedback/Gameplay/GameFlow/Progression - so it stays
+usable by any game regardless of which other phases it also uses. `PlayerDataBootstrapper` is a
+`GameBootstrapper` subclass (not a `PlayerSystemsBootstrapper` subclass) because every dependency
+`PlayerProfileService` needs (`IPersistenceService`, `IEventService`, `ITimerService`, and optionally
+`ISceneService`/`ILoggingService`) is already part of the base eight services `GameBootstrapper`
+itself registers.
+
+**Storage keys.** There is no per-slot envelope format added to Phase 2 - instead, every section's
+data is its own already-versioned, already-migratable `IPersistenceService` key:
+`"GameFramework.PlayerData.{profileId}.{sectionId}"`. A profile's metadata (`CreatedAtUtc`,
+`LastModifiedAtUtc`, `LastPlayedAtUtc`, `SchemaVersion`) is a sibling key,
+`"...{profileId}.Meta"`, and the list of profile ids that exist is tracked under
+`"GameFramework.PlayerData.Index"` - required because `IPersistenceStorage` has no "list all keys"
+capability. This reuses Phase 2 completely: no new serializer, no new storage backend, no new
+envelope format.
+
+**Sections.** A game defines its own persistent data by subclassing `PlayerDataSection<TData>`:
+
+```csharp
+[Serializable]
+public sealed class ProgressionSaveData
+{
+    public List<string> CompletedLevelIds = new List<string>();
+}
+
+public sealed class ProgressionDataSection : PlayerDataSection<ProgressionSaveData>
+{
+    public override string Id => "Progression";
+    public override int Version => 1;
+
+    public bool IsLevelCompleted(string levelId) => Data.CompletedLevelIds.Contains(levelId);
+
+    public void SetLevelCompleted(string levelId)
+    {
+        if (!Data.CompletedLevelIds.Contains(levelId))
+        {
+            Data.CompletedLevelIds.Add(levelId);
+            MarkDirty();
+        }
+    }
+}
+```
+
+`PlayerDataSection<TData>` already implements `Save`/`Load`/`ResetToDefaults`/dirty-tracking against
+`TData` (a plain `JsonUtility`-compatible class, the same constraint `JsonPersistenceSerializer`
+already documents) - a game only writes the domain methods, never touches
+`IPersistenceService`/`JsonUtility` itself. This is the exact Save/Load/dirty-flag shape
+`EconomyService`/`SettingsService`/`TutorialService` already hand-write for themselves individually;
+`PlayerDataSection<TData>` is that shape factored out, available for a game's own new data going
+forward (see "Known limitation" below for why it isn't retrofitted onto those six).
+
+Registration happens once, after `GameBootstrapper.State` reaches `Ready` (the same "wait for Ready,
+then wire content" pattern `ProgressionBootstrapper` documents), before loading any profile:
+
+```csharp
+var playerData = GameBootstrapper.Instance.Services.Get<IPlayerProfileService>();
+playerData.RegisterSection(() => new ProgressionDataSection());
+playerData.RegisterMigration("Progression", new ProgressionV1ToV2Migration());
+playerData.LoadDefaultProfile();
+```
+
+**Profile lifecycle.** `ProfileState`: `Unloaded → Loading → Loaded → (Saving) → Loaded → Unloading
+→ Unloaded`. `Saving` always returns to `Loaded` regardless of outcome - a failed save is reported
+through `LastSaveResult`/`ProfileSaveFailed`, never a stuck state. Every command
+(`CreateProfile`/`LoadProfile`/`LoadDefaultProfile`/`UnloadActiveProfile`/`SwitchProfile`/
+`DeleteProfile`/`Save`) returns a `ProfileOperationResult` instead of throwing - the same
+non-throwing pattern `IGameFlowService`/`INavigationService` already established - and is rejected
+with `ProfileOperationResultKind.AlreadyActive` while another is in progress, including a call made
+synchronously from inside this service's own event handlers (the same re-entrancy rule
+`INavigationService` documents - defer such a follow-up by one frame instead).
+
+**Dirty tracking and autosave.** A section calls its own `MarkDirty()` after a real mutation; nothing
+is scanned or polled per frame. `AutosavePolicy.Triggers` (a `[Flags]` enum) composes which of
+`ApplicationPause`/`FocusLost`/`SceneTransition`/`ProfileUnload`/`DirtyDebounce` actually save
+automatically - "on milestone" needs no flag of its own, since a milestone save is simply the game
+calling `IPlayerProfileService.Save()` directly. `DirtyDebounce` schedules one
+`Runtime.Timers.ITimerService` one-shot (`AutosavePolicy.DebounceSeconds`, default 3s, unscaled so it
+keeps counting down through a paused game) that reschedules - never queues a second one - on every
+further dirty mutation, so a burst of rapid changes produces one write, not several.
+`ApplicationPause`/`FocusLost`/`ApplicationQuit` are forwarded by a private
+`PlayerDataLifecycleDriver` `MonoBehaviour` - deliberately not a reference to
+`Performance.Mobile.IApplicationLifecycleService` (see `PlayerDataLifecycleDriver`'s remarks): that
+would force every Player Data user to pull in Performance's entire profiling/tick/pooling/mobile
+surface just for pause detection, breaking the "usable by any game" independence Phase 5 itself
+established for Performance. The two never fight over `ITimeService` - this driver never touches
+time scale, only triggers a save.
+
+**Corruption and backup.** Before overwriting a section's on-disk data, `EnableBackups` (on by
+default) copies what is currently there to a `".bak"` companion key - one extra load+save per dirty
+section per save cycle, never per mutation. On load, `PlayerProfileService` deletes any stale
+`".corrupt"` marker for a key before calling `IPersistenceService.Load`, then checks whether a new
+one appears; `PersistenceService` only ever creates that marker when a load actually failed (see
+[Persistence](#persistence)), so this reliably distinguishes "this load just failed" from "no save
+exists yet" without changing Phase 2 at all. A failed section first tries its own `".bak"`, then
+falls back to `ResetToDefaults()` - the profile still loads (`ProfileOperationResultKind.Corrupted`,
+not a hard failure), with only the unrecoverable section(s) reset, and the original corrupt bytes
+still preserved under `".corrupt"` by Phase 2 itself.
+
+**Migration forwarding.** `IPlayerProfileService.RegisterMigration(sectionId, migration)` doesn't
+forward to `IPersistenceService.RegisterMigration` immediately, since the concrete key includes a
+profile id that may not exist yet. Instead it queues the migration by section id, and
+`PlayerProfileService` forwards it to `IPersistenceService.RegisterMigration` against each profile's
+*concrete* key the first time that profile+section combination is loaded or created (tracked so it
+is never forwarded twice for the same key, which `IPersistenceService.RegisterMigration` would
+reject).
+
+**Known limitation - not applied to Phase 3/6/9's existing systems.** `SettingsService`,
+`EconomyService`, `InventoryService`, `ExperienceService`, `StatisticsService`, and `TutorialService`
+each already persist themselves directly against a fixed, non-profile-scoped
+`IPersistenceService` key (e.g. `"GameFramework.Progression.Economy"`) - effectively one implicit
+global profile per install. Retrofitting them to save under a profile-scoped key would change every
+existing game's save file location/contents, a breaking migration outside this phase's scope (per
+CLAUDE.md's Phase 13 brief, section 73: explain the conflict, do not force it). A game that wants one
+of those six systems' data to live inside a profile can wrap it in its own small
+`PlayerDataSection<TData>` adapter; this framework does not do that automatically. True
+multi-profile save slots therefore only cover data a game registers through this framework's own
+section API, not those six systems' existing saves, until/unless a future phase explicitly takes on
+that migration.
+
+**Other known limitations.** Migration-chain gaps ("no migration registered from version N") are
+reported by `IPersistenceService.Load` as a logged error with data silently defaulted, not as a
+distinguishable failure this layer can detect from its current public surface (only an actual
+deserialize exception - real corruption - produces the `".corrupt"` marker this layer keys its
+recovery off of); this is a content/authoring bug to catch by keeping a project's migrations
+registered for every shipped version, not a runtime corruption scenario, so no additive Phase 2 API
+change was made for it. A profile-wide save is not multi-file-transactional: each section's own file
+write is atomic (Phase 2's tmp+rename), but if one section's `Save`/`Validate` throws mid-cycle,
+sections already written before it stay written (logged, reported via
+`ProfileOperationResultKind.Failed`, section(s) remain dirty for the next attempt) rather than being
+rolled back - Phase 2 has no multi-key transaction primitive to roll back with. No profile-selection
+UI, cloud save, or backend sync is built - see CLAUDE.md's Phase 13 brief, section 63.
+
+**Tests.** `Tests/Editor/PlayerData` (EditMode: profile create/load/unload/switch/delete/default,
+section registration/dirty-tracking/validation, migration forwarding across profiles, corruption/
+backup recovery via a real cross-session `InMemoryPersistenceStorage` reuse, debounced/coalesced
+autosave driven through a real `TimerService.Tick()`, event ordering) and
+`Tests/Runtime/PlayerData` (PlayMode: `PlayerDataBootstrapper` reaching `Ready`,
+`DontDestroyOnLoad`-dependent driver construction, simulated application-pause flush). All pass, and
+the full pre-existing suite (734 EditMode + 135 PlayMode tests as of this phase) still passes
+unchanged.
+
 ## Roadmap
 
 Phase 3 deliberately did **not** include: Progression, Rewards, Currency, Inventory, Economy,
@@ -3584,11 +3778,19 @@ framework. Planned next:
   are the seams a game's own presentation layer or a later phase would extend, not something this
   phase builds itself.
 
-Candidate next phases, based on the actual architecture after Phase 12 (none committed to yet):
-a save-slot/profile layer on top of Phase 2's `IPersistenceService` (multiple named save slots, not
-just one envelope per key, and the natural place to persist "last screen"/"tutorial completed"/etc.
-if a game ever wants that); or a first concrete game built on top of everything through Phase 12,
-which would likely surface real integration gaps (e.g. an actual GameFlow<->Navigation bridge beyond
-plain event mappings, a concrete need for `NavigationGuardResult.Defer` retry semantics, or a genuine
-need for gamepad/keyboard UI focus navigation) faster than a thirteenth infrastructure-only phase
-would.
+Phase 13 — Save Profiles & Player Data Framework. Done — see
+[Save Profiles & Player Data Framework](#save-profiles--player-data-framework). Explicitly out of
+scope and left for later (see that section's own "Known limitations"): cloud save, backend/account
+sync, IAP/ads/analytics/remote config integration, a profile-selection UI, multi-file transactional
+saves, and retrofitting Phase 3/6/9's six existing self-persisting systems onto profile-scoped keys -
+`IPlayerDataSection`/`PlayerDataSection<TData>`/`RegisterMigration` are the seams a game's own data
+or a later phase would extend, not something this phase builds itself.
+
+Candidate next phases, based on the actual architecture after Phase 13 (none committed to yet): a
+first concrete game built on top of everything through Phase 13, which would likely surface real
+integration gaps (e.g. an actual GameFlow<->Navigation<->PlayerData bootstrap bridge beyond plain
+event mappings, a concrete need for `NavigationGuardResult.Defer` retry semantics, or a genuine need
+for gamepad/keyboard UI focus navigation) faster than a fourteenth infrastructure-only phase would;
+or, if multi-profile saves for the existing Progression/Settings/Tutorial systems become a real
+requirement, a deliberate, explicitly-scoped migration of those six systems onto profile-scoped
+`IPersistenceService` keys (the known limitation this phase's own section calls out).

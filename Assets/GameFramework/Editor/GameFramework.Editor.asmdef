@@ -15,7 +15,8 @@
         "GameFramework.Audio",
         "GameFramework.Cameras",
         "GameFramework.UI",
-        "GameFramework.UI.Navigation"
+        "GameFramework.UI.Navigation",
+        "GameFramework.PlayerData"
     ],
     "includePlatforms": [
         "Editor"

@@ -1,0 +1,17 @@
+{
+    "name": "GameFramework.PlayerData",
+    "rootNamespace": "GameFramework.PlayerData",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
