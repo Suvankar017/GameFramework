@@ -2083,3 +2083,80 @@ this section is the stable rule summary; that one is the living reference.
   roll back a different section's already-written data (Phase 2 has no multi-key transaction
   primitive). Do not build one for this; log, isolate, and report `ProfileOperationResultKind.Failed`
   with the affected section ids instead.
+
+---
+
+# 80. Phase 14 Mobile Platform & Device Services Framework
+
+Phase 14 added `GameFramework.Platform` — platform identity, device information/capabilities,
+screen/orientation/safe-area, clipboard, URL opening, app-store linking, network reachability, and a
+minimal cross-platform permission model. Full API examples and design rationale live in
+`Assets/GameFramework/Documentation/Framework.md`'s "Mobile Platform & Device Services Framework"
+section — this section is the stable rule summary; that one is the living reference.
+
+## Platform Architecture
+
+* `GameFramework.Platform` references only `GameFramework.Core`/`GameFramework.Runtime` — never
+  Input/UI/Audio/Feedback/Gameplay/Performance. It must stay usable by any game regardless of which
+  other systems it also uses, the same independence Phase 5/Phase 13 already established for
+  themselves.
+* Application lifecycle (pause/resume/focus/quit) is **not** re-implemented here.
+  `Performance.Mobile.IApplicationLifecycleService` (Phase 5) already centralizes exactly that; a
+  game using both Platform and Performance gets one lifecycle relay, not two competing ones. A game
+  that wants lifecycle visibility without the rest of Performance registers
+  `Performance.Mobile.ApplicationLifecycleService` directly — Platform does not gate this behind its
+  own bootstrapper.
+* Haptics are **not** re-implemented here either. `Feedback.IHapticProvider`/`MobileHapticProvider`
+  (Phase 3) already covers the one haptic API Unity exposes without a native plugin
+  (`Handheld.Vibrate`); `DeviceInfoService.Supports(DeviceCapability.Haptics)` mirrors
+  `MobileHapticProvider.IsSupported`'s exact same `Application.isMobilePlatform` check rather than
+  inventing a different heuristic for the same question.
+* `PlatformBootstrapper` is a `GameBootstrapper` subclass (not a `PlayerSystemsBootstrapper`
+  subclass) — nothing it registers has a hard dependency on Input/UI. Registration order matters:
+  `IDeviceInfoService` and `IAppStoreService`/`IAppSettingsService` resolve `IPlatformService` (and,
+  for the store service, `IPlatformUrlService`) during their own `Initialize`, so those must already
+  be registered.
+* `DeviceInfoService` deliberately does not depend on `Performance.Mobile.DeviceInfo` (Phase 5's
+  static utility). That type is a narrower, differently-scoped snapshot for picking a coarse
+  `PerformanceProfile`; this service is the general-purpose device/capability surface a game may want
+  without pulling in all of `GameFramework.Performance`. The resulting duplicated `SystemInfo` reads
+  are one-time, at `Initialize`, never a hot-path concern — the same reasoning
+  `PlayerDataLifecycleDriver` already documents for its own deliberate independence from Phase 5.
+
+## Capability & Permission Rules
+
+* Prefer `IDeviceInfoService.Supports(DeviceCapability)` over branching on `IPlatformService.Platform`
+  for feature checks — a platform is not a reliable proxy for a capability, and a specific device may
+  lack a feature its platform generally supports.
+* `DeviceCapability` deliberately excludes Camera/Microphone hardware-presence checks — enumerating
+  those devices touches sensitive platform surface for a passive capability query, which conflicts
+  with this phase's privacy-minimal design. `PlatformPermission` covers the permission side of camera/
+  microphone instead, and is deliberately limited to the two permissions Unity itself exposes a
+  genuine cross-platform check/request API for
+  (`Application.HasUserAuthorization`/`RequestUserAuthorization`). Do not add a permission this API
+  can't actually answer (location, notifications, storage) without a real native plugin backing it.
+* `IPermissionService` never shows an OS prompt on its own — only an explicit
+  `RequestPermission` call does. Do not call `RequestPermission` from framework/bootstrap code; that
+  decision belongs to the game.
+
+## Screen & Native Integration Rules
+
+* Unity has no change callback for `Screen.orientation`/`Screen.safeArea`. `ScreenService` is the one
+  place that polls both, once per frame, through `ScreenSignalDriver`, and only publishes
+  `ScreenOrientationChangedEvent`/`ScreenSafeAreaChangedEvent` when a value actually changed — do not
+  add a second poller for either elsewhere.
+* This phase does not add a UI-side safe-area component. `IScreenService.SafeArea` is the
+  platform/device information a UI layer would consume; no such component exists yet in this project
+  (see Framework.md's UI Foundation section) — do not build one here as a side effect of adding
+  `IScreenService`.
+* `Android/AndroidAppSettingsProvider` is the one place in this framework that touches
+  `AndroidJavaObject`/`AndroidJavaClass` directly, gated `#if UNITY_ANDROID && !UNITY_EDITOR`. Do not
+  scatter native Android calls anywhere else; add a new isolated provider under `Platform/Android/`
+  (or `Platform/iOS/` for a future native iOS need) instead.
+* `IAppStoreService`/`IPlatformUrlService` need no native code — the Play Store and App Store both
+  expose ordinary URL schemes (`market://`, `itms-apps://`) opened through
+  `Application.OpenURL`. Do not add an `AndroidJavaObject`-based store-opening path; it would
+  duplicate a already-working, simpler mechanism.
+* `AppStoreConfig` (Android package name, iOS App Store id) is optional, game-supplied configuration
+  — never hard-code a project's store identifiers into framework code. Missing/unconfigured platforms
+  fail gracefully (`OpenStorePage`/`OpenReviewPage` return `false` and log a warning), never throw.

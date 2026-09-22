@@ -12,6 +12,7 @@
   <Project Path="GameFramework.Samples.Phase11Demo.csproj" />
   <Project Path="GameFramework.Tutorials.Tests.csproj" />
   <Project Path="GameFramework.Cameras.Cinemachine.csproj" />
+  <Project Path="GameFramework.Platform.csproj" />
   <Project Path="GameFramework.Editor.csproj" />
   <Project Path="GameFramework.Presentation.Tests.csproj" />
   <Project Path="GameFramework.Runtime.Tests.csproj" />
@@ -35,6 +36,7 @@
   <Project Path="GameFramework.UI.Navigation.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Core.csproj" />
   <Project Path="GameFramework.Feedback.Tests.csproj" />
+  <Project Path="GameFramework.Platform.Tests.Runtime.csproj" />
   <Project Path="GameFramework.UI.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Feedback.csproj" />
   <Project Path="GameFramework.Quests.Tests.csproj" />

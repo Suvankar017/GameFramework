@@ -65,6 +65,20 @@ through the framework instead. See [Camera Framework](#camera-framework). It com
 10's existing `Presentation.CameraFeedbackDriver` through script execution order alone
 (`[DefaultExecutionOrder(-100)]`) — zero compile-time coupling between the two assemblies in either
 direction, and no second camera-shake system.
+Phase 12 adds a reusable UI navigation/menu-flow orchestration layer on top of Phase 3's `IUIService`
+screen/popup stack — see [UI Navigation & Menu Flow Framework](#ui-navigation--menu-flow-framework).
+Phase 13 adds a player-profile and player-data orchestration layer on top of Phase 2's
+`IPersistenceService` — see [Save Profiles & Player Data Framework](#save-profiles--player-data-framework).
+Phase 14 adds a platform/device services layer, Core/Runtime only: one registered `IPlatformService`
+(platform identity), `IDeviceInfoService` (a cached device snapshot plus capability queries),
+`IScreenService` (safe area/orientation, polled since Unity has no change callback for either),
+`IClipboardService`, `IPlatformUrlService`, `IAppStoreService` (game-supplied store identifiers,
+never hard-coded), `INetworkReachabilityService`, `IPermissionService` (Camera/Microphone only — the
+two permissions Unity's own `Application.HasUserAuthorization` genuinely supports cross-platform),
+and `IAppSettingsService` (Android only, via the framework's one isolated `AndroidJavaObject`
+boundary) — see [Mobile Platform & Device Services Framework](#mobile-platform--device-services-framework).
+It deliberately does not re-implement application lifecycle or haptics, both already owned by Phase 5
+and Phase 3 respectively.
 The framework still defines no concrete currencies, items, levels, rewards, quests, achievements,
 tutorial content, feedback content, or camera content for any specific game — no player character,
 enemy AI, weapons, economy backend, live ops, or IAP exists yet — see [Roadmap](#roadmap).
@@ -3685,6 +3699,160 @@ autosave driven through a real `TimerService.Tick()`, event ordering) and
 the full pre-existing suite (734 EditMode + 135 PlayMode tests as of this phase) still passes
 unchanged.
 
+## Mobile Platform & Device Services Framework
+
+Phase 14 adds `GameFramework.Platform` — a clean abstraction between game/framework code and
+Android/iOS platform behavior, so ordinary gameplay/UI code never needs its own
+`#if UNITY_ANDROID`/`UNITY_IOS` or `Application.platform` switch. References only
+`GameFramework.Core`/`GameFramework.Runtime`, the same "usable by any game regardless of which other
+systems it also uses" independence Phase 5 and Phase 13 already established for themselves.
+
+### Services
+
+- **`IPlatformService`** (`PlatformService`) — `Platform` (`PlatformType`: `Unknown`/`Editor`/
+  `Android`/`IOS`/`Windows`/`MacOS`/`Linux`) plus `IsEditor`/`IsMobile`/`IsAndroid`/`IsIOS`/
+  `IsDesktop` convenience flags. Resolved once at `Initialize` from `Application.isEditor`/
+  `Application.platform` — identity cannot change mid-session, so there is nothing to poll.
+- **`IDeviceInfoService`** (`DeviceInfoService`) — `Current` (`PlatformDeviceInfo`, an immutable
+  snapshot: model, operating system, device type, processor type/count, system memory, graphics
+  device name/memory, screen width/height/DPI) captured once at `Initialize`; `BatteryLevel`/
+  `BatteryStatus` queried live (battery genuinely changes over a session, and
+  `SystemInfo.batteryLevel` is itself a cheap OS query — not worth caching); `Supports(DeviceCapability)`
+  for `Haptics`/`Gyroscope`/`Accelerometer`/`Touch`/`MultiTouch`/`LocationService`/`Clipboard`/`Audio`.
+  Deliberately independent of `Performance.Mobile.DeviceInfo` (Phase 5's own narrower, differently-
+  scoped static utility for picking a coarse `PerformanceProfile`) — see that section's own remarks
+  and this section's "Known limitations."
+- **`IScreenService`** (`ScreenService`) — `SafeArea` (`Rect`), `Orientation` (`ScreenOrientation`),
+  `SetOrientation(ScreenOrientation)`. Unity exposes no change callback for either
+  `Screen.orientation` or `Screen.safeArea`, so an internal `ScreenSignalDriver` (the same
+  driver-MonoBehaviour pattern `Performance.Mobile.ApplicationLifecycleDriver` already established)
+  compares both once per frame and `ScreenService` publishes `ScreenOrientationChangedEvent`/
+  `ScreenSafeAreaChangedEvent` through the Phase 2 Event System only when a value actually changed.
+  Deliberately does not include a UI-side safe-area component — this is the platform/device
+  information a UI layer would consume; none exists yet in this project (see UI Foundation above).
+- **`IClipboardService`** (`ClipboardService`) — `SetText`/`GetText`/`HasText`/`IsSupported`, a thin
+  wrapper over `GUIUtility.systemCopyBuffer` (already cross-platform in Unity — no native code
+  needed).
+- **`IPlatformUrlService`** (`PlatformUrlService`) — `OpenUrl(string)` validates (`Uri.TryCreate`,
+  absolute URIs only) before calling `Application.OpenURL`, returning `false` without opening
+  anything for an invalid URL. `PlatformUrlService.IsValidUrl` is `public static` and side-effect-free
+  so a game can validate a URL (e.g. to enable/disable a "visit our website" button) without
+  triggering `Application.OpenURL`.
+- **`IAppStoreService`** (`AppStoreService`) — `OpenStorePage`/`OpenReviewPage`/`HasConfiguration`,
+  backed by an optional `AppStoreConfig` (a `[SerializeField]` on `PlatformBootstrapper`: Android
+  package name, iOS App Store id — never hard-coded in framework code). Needs no native code: both
+  the Play Store (`market://details?id=...`) and App Store (`itms-apps://itunes.apple.com/app/id...`)
+  expose ordinary URL schemes, opened through `IPlatformUrlService`. `AppStoreService.BuildStoreUrl`
+  is `public static` and pure, so URL construction is directly testable without actually opening
+  anything. Missing configuration for the current platform returns `false` and logs a warning —
+  never throws.
+- **`INetworkReachabilityService`** (`NetworkReachabilityService`) — `Current`
+  (`UnityEngine.NetworkReachability`, reused directly rather than duplicated), `IsOnline`. Queried
+  live; `Application.internetReachability` is itself cheap, so no polling driver exists for this. Not
+  a networking framework and not a proxy for "is our backend reachable."
+- **`IPermissionService`** (`PermissionService`) — `GetStatus`/`CanRequest`/`RequestPermission` for
+  `PlatformPermission.Camera`/`Microphone` only, built entirely on
+  `Application.HasUserAuthorization`/`RequestUserAuthorization` — Unity's own genuinely
+  cross-platform (Android/iOS/Editor) permission API, needing no native plugin or `#if` branching.
+  `PermissionStatus` is `NotDetermined`/`Granted`/`Denied`; `NotDetermined` is what this API reports
+  before a request is ever made (it cannot distinguish "denied" from "never asked" ahead of time — an
+  honest platform-API limitation, not a bug here). Never shows an OS prompt except from an explicit
+  `RequestPermission` call the game itself makes. An internal `PermissionRequestDriver` runs the
+  coroutine needed to wait for the `AsyncOperation` `RequestUserAuthorization` returns.
+- **`IAppSettingsService`** (`AppSettingsService`) — `OpenApplicationSettings()`. Android opens the
+  app's "App info" screen via `Platform/Android/AndroidAppSettingsProvider` — the one place in this
+  entire framework that touches `AndroidJavaObject`/`AndroidJavaClass` directly, gated
+  `#if UNITY_ANDROID && !UNITY_EDITOR`, every Java object used once and released immediately. iOS/
+  Editor/desktop honestly report unsupported (`false` + a log) rather than guessing at an
+  undocumented URL scheme — Unity has no public, non-deprecated API for this on iOS without a native
+  bridge.
+
+### Deliberately not re-implemented here
+
+- **Application lifecycle** (pause/resume/focus/quit) — `Performance.Mobile.IApplicationLifecycleService`
+  (Phase 5) already centralizes exactly this and republishes it as Phase 2 events. A game using both
+  Platform and Performance gets one lifecycle relay, not two competing ones. A game that wants
+  lifecycle visibility without the rest of Performance registers
+  `Performance.Mobile.ApplicationLifecycleService` directly — `PlatformBootstrapper` does not gate
+  this behind itself, the same soft-integration story `PlayerDataLifecycleDriver` already
+  established for Phase 13.
+- **Haptics** — `Feedback.IHapticProvider`/`MobileHapticProvider` (Phase 3) already cover the one
+  haptic API Unity exposes without a native plugin (`Handheld.Vibrate`).
+  `DeviceInfoService.Supports(DeviceCapability.Haptics)` mirrors `MobileHapticProvider.IsSupported`'s
+  exact `Application.isMobilePlatform` check rather than inventing a second heuristic for the same
+  question.
+
+### Bootstrap
+
+`PlatformBootstrapper` (a `GameBootstrapper` subclass — nothing it registers has a hard dependency on
+Input/UI, so it does not need to subclass `PlayerSystemsBootstrapper`) registers all nine services
+above in dependency order: `IPlatformService` → `IDeviceInfoService` → `IScreenService` →
+`IClipboardService` → `IPlatformUrlService` → `IAppStoreService` → `INetworkReachabilityService` →
+`IPermissionService` → `IAppSettingsService`. `IDeviceInfoService` and `IAppStoreService`/
+`IAppSettingsService` resolve `IPlatformService` (and, for the store service, `IPlatformUrlService`)
+during their own `Initialize`, so registration order here is load-bearing, not cosmetic — the same
+"depends-on must already be registered" rule every other bootstrapper subclass follows.
+
+```csharp
+var platform = GameBootstrapper.Instance.Services.Get<IPlatformService>();
+
+if (platform.IsMobile)
+{
+    var deviceInfo = GameBootstrapper.Instance.Services.Get<IDeviceInfoService>();
+    if (deviceInfo.Supports(DeviceCapability.Haptics))
+    {
+        // ...
+    }
+}
+
+var screen = GameBootstrapper.Instance.Services.Get<IScreenService>();
+screen.SetOrientation(ScreenOrientation.LandscapeLeft);
+
+var appStore = GameBootstrapper.Instance.Services.Get<IAppStoreService>();
+appStore.OpenStorePage();
+```
+
+### Privacy
+
+No tracking identifiers, fingerprinting, or personal data collection anywhere in this phase.
+`DeviceCapability` deliberately excludes Camera/Microphone hardware-presence checks (enumerating
+those devices touches sensitive platform surface for a passive capability query); the permission side
+of camera/microphone is `PlatformPermission` instead, which only ever *checks* or, on an explicit
+game-initiated call, *requests* — it never requests anything on its own, and no framework code calls
+`RequestPermission` from bootstrap/initialization.
+
+### Known limitations / non-goals
+
+Ads, IAP, analytics, remote config, notifications, and cloud save/backend integration are explicitly
+out of scope for this phase (later phases' concerns). A full permissions SDK (location,
+notifications, storage) was deliberately not built — `PlatformPermission` covers only Camera/
+Microphone, the two permissions Unity's own cross-platform API can genuinely answer without a native
+plugin; a game needing more implements its own `IPermissionService`. Native share, soft-keyboard
+control, and thermal-state management were not implemented — nothing in this project currently needs
+them, and `Platform/Android`/`Platform/iOS` are the seams a later, concretely-motivated addition would
+extend. No device-to-quality-profile heuristic exists here (`Performance.IMobilePerformanceService.ApplyProfile`
+remains that decision). No UI-side safe-area component was added — `IScreenService.SafeArea` is
+the seam a future UI addition would consume. `IAppSettingsService.OpenApplicationSettings` only
+works on Android; iOS has no public, non-deprecated equivalent without a native bridge. Orientation
+change/safe-area change detection (via `ScreenSignalDriver`'s per-frame polling) was validated in the
+Editor, where Unity's own orientation simulation is limited — genuine device-level orientation/notch
+behavior needs physical Android/iOS device testing, not yet performed (see this phase's completion
+report for exactly what was/wasn't verified).
+
+### Testing
+
+`GameFramework.Platform.Tests.Runtime` (PlayMode — required because `PlatformBootstrapper.Awake`
+calls `DontDestroyOnLoad`, and because `ScreenService`/`PermissionService` each create their own
+`DontDestroyOnLoad` driver GameObject) covers: bootstrap registration of all nine services;
+`PlatformService` identity in the Editor; `DeviceInfoService.Current`'s snapshot values and
+`Supports` not throwing for any capability; `ScreenService` exposing live values without throwing;
+`AppStoreService`/`PlatformUrlService`/`NetworkReachabilityService` pure logic (URL validation, store
+URL construction for Android/iOS/missing-config/unsupported-platform, reachability passthrough) —
+each directly testable via a `public static` pure method with no `Application.OpenURL` side effect;
+`ClipboardService` set/get/has round-trips; and `PermissionService.RequestPermission` invoking its
+callback exactly once. 36/36 Phase 14 tests pass; the full pre-existing suite (734 EditMode + 171
+PlayMode tests as of this phase) still passes unchanged.
+
 ## Roadmap
 
 Phase 3 deliberately did **not** include: Progression, Rewards, Currency, Inventory, Economy,
@@ -3786,11 +3954,23 @@ saves, and retrofitting Phase 3/6/9's six existing self-persisting systems onto 
 `IPlayerDataSection`/`PlayerDataSection<TData>`/`RegisterMigration` are the seams a game's own data
 or a later phase would extend, not something this phase builds itself.
 
-Candidate next phases, based on the actual architecture after Phase 13 (none committed to yet): a
-first concrete game built on top of everything through Phase 13, which would likely surface real
+Phase 14 — Mobile Platform & Device Services Framework. Done — see
+[Mobile Platform & Device Services Framework](#mobile-platform--device-services-framework).
+Explicitly out of scope and left for later (see that section's own "Known limitations"): Ads, IAP,
+analytics, remote config, notifications, cloud save/backend integration, a full permissions SDK
+(location/notifications/storage), native share, keyboard/soft-input control, application-settings
+deep links beyond Android, thermal-state management, and any device-to-quality-profile heuristic
+(that remains Phase 5's `IMobilePerformanceService.ApplyProfile` decision) —
+`IPermissionService`/`IAppStoreService`/the `Platform/Android` provider boundary are the seams a
+later phase or a game's own native integration would extend, not something this phase builds itself.
+
+Candidate next phases, based on the actual architecture after Phase 14 (none committed to yet): a
+first concrete game built on top of everything through Phase 14, which would likely surface real
 integration gaps (e.g. an actual GameFlow<->Navigation<->PlayerData bootstrap bridge beyond plain
-event mappings, a concrete need for `NavigationGuardResult.Defer` retry semantics, or a genuine need
-for gamepad/keyboard UI focus navigation) faster than a fourteenth infrastructure-only phase would;
-or, if multi-profile saves for the existing Progression/Settings/Tutorial systems become a real
-requirement, a deliberate, explicitly-scoped migration of those six systems onto profile-scoped
-`IPersistenceService` keys (the known limitation this phase's own section calls out).
+event mappings, a concrete need for `NavigationGuardResult.Defer` retry semantics, a genuine need for
+gamepad/keyboard UI focus navigation, or a UI-side safe-area component consuming Phase 14's
+`IScreenService`) faster than a fifteenth infrastructure-only phase would; or, if multi-profile saves
+for the existing Progression/Settings/Tutorial systems become a real requirement, a deliberate,
+explicitly-scoped migration of those six systems onto profile-scoped `IPersistenceService` keys (the
+known limitation Phase 13's own section calls out); or Ads/IAP/Analytics, the concerns Phase 14
+explicitly left for a dedicated later phase.

@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 13 — Save Profiles & Player Data Framework**, on top of:
+**Phase 14 — Mobile Platform & Device Services Framework**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -83,6 +83,16 @@ that most games need, without any game-specific content.
   by any game regardless of which other phases it also uses; does not retrofit Phase 3/6/9's six
   existing self-persisting systems (Settings/Economy/Inventory/Experience/Statistics/Tutorials) onto
   profile-scoped keys — see `Framework.md`'s Phase 13 section for that known limitation.
+- **Phase 14** — a platform/device services layer, Core/Runtime only: one registered
+  `IPlatformService` (platform identity), `IDeviceInfoService` (cached device snapshot + capability
+  queries), `IScreenService` (safe area/orientation, polled since Unity has no change callback for
+  either), `IClipboardService`, `IPlatformUrlService`, `IAppStoreService` (game-supplied store
+  identifiers), `INetworkReachabilityService`, `IPermissionService` (Camera/Microphone only — the two
+  permissions Unity's own `Application.HasUserAuthorization` genuinely supports cross-platform), and
+  `IAppSettingsService` (Android only, via the framework's one isolated `AndroidJavaObject`
+  boundary). Deliberately does not re-implement application lifecycle (already
+  `Performance.Mobile.IApplicationLifecycleService`) or haptics (already `Feedback.IHapticProvider`) —
+  see `Framework.md`'s Phase 14 section for the full non-goal list.
 
 No player character, enemy AI, weapons, ads, analytics, IAP, remote config, or multiplayer exists
 yet, and no concrete currency/item/level/unlock/reward/quest/achievement/tutorial-content/feedback-
@@ -192,6 +202,16 @@ optional `Action<T> onBeforeOpen = null` parameter (default null, every existing
 unaffected) - the one seam Navigation needed to deliver typed parameters to a screen/popup before its
 own `OnOpened` lifecycle hook fires.
 
+`GameFramework.Platform` (Phase 14) is a ninth sibling of PlayerSystems/Gameplay/Performance/
+Progression/GameFlow/Tutorials/Cameras — it references only Core/Runtime, deliberately not
+Performance (its `DeviceInfoService` independently queries `SystemInfo` rather than depending on
+`Performance.Mobile.DeviceInfo`, the same "usable by any game regardless of which other systems it
+also uses" independence Phase 5/Phase 13 already established) and not Feedback (it does not
+re-implement haptics; `DeviceInfoService.Supports(DeviceCapability.Haptics)` mirrors
+`MobileHapticProvider.IsSupported`'s check rather than depending on `GameFramework.Feedback` to reuse
+it). Its `PlatformBootstrapper` is a `GameBootstrapper` subclass, not a `PlayerSystemsBootstrapper`
+subclass — nothing it registers has a hard dependency on Input/UI.
+
 Everything is wired together by `GameBootstrapper`, which registers and initializes services in a
 load-bearing order: Logging → GameState → Scene → Time → Timer → Event → Persistence → Settings,
 then (via `PlayerSystemsBootstrapper`) Input → Localization → Audio → UI → Feedback, (via
@@ -210,7 +230,10 @@ Feedback/Gameplay/Performance/UI are wanted so its soft lookups succeed) `IPrese
 (via `CameraBootstrapper`, or a game's own combined subclass) `ICameraService`, and (via
 `NavigationBootstrapper`, which extends `PlayerSystemsBootstrapper` directly since it has a real
 compile-time dependency on UI, or a game's own combined subclass, registered after `IInputService`/
-`IGameFlowService` so their soft lookups succeed) `INavigationService`.
+`IGameFlowService` so their soft lookups succeed) `INavigationService`, and (via `PlatformBootstrapper`, or a game's own combined subclass)
+`IPlatformService` → `IDeviceInfoService` → `IScreenService` → `IClipboardService` →
+`IPlatformUrlService` → `IAppStoreService` → `INetworkReachabilityService` → `IPermissionService` →
+`IAppSettingsService`.
 
 ## Assemblies
 
@@ -236,7 +259,9 @@ compile-time dependency on UI, or a game's own combined subclass, registered aft
 | `GameFramework.Cameras` | Camera orchestration: `ICameraService` (registration, base activation, override stack), `ICameraMode` (Follow/Static/TargetLook/Manual), world bounds, damped zoom, transitions (Phase 11). Composition root: `CameraBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials` — references only Core/Runtime/Performance; composes with `GameFramework.Presentation`'s camera feedback through script execution order only, no assembly reference either way. |
 | `GameFramework.Cameras.Cinemachine` | Optional alternative driver for the same `ICameraService`/`CameraController` orchestration, backed by a real Cinemachine virtual camera instead of `CameraDriver`'s pure-C# pipeline (Phase 11, added once Cinemachine was installed). `CinemachineCameraAdapter` + `CinemachineCameraBackend`; no composition root/service of its own — plain scene composition. References `GameFramework.Cameras` + `Cinemachine` only; the only assembly in the framework that references Cinemachine. |
 | `GameFramework.UI.Navigation` | UI navigation/menu-flow orchestration on top of `IUIService`: stable-id screen/popup registration, a navigation stack independent of Unity's scene history (`Navigate`/`Replace`/`Reset`/`NavigateBack`), back-navigation priority, typed parameters/results, guards, event-driven popups, and centralized Android/back-button routing (Phase 12). Composition root: `NavigationBootstrapper` (extends `PlayerSystemsBootstrapper`). References `GameFramework.UI` (hard) + `GameFramework.Input`/`GameFramework.GameFlow` (soft, `registry.TryGet`). |
-| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, and UI Navigation Catalog validation menu items. |
+| `GameFramework.PlayerData` | Player-profile/player-data orchestration on top of `IPersistenceService`: profile identity/lifecycle, `PlayerDataSection<TData>` data sections, autosave, corruption/backup recovery (Phase 13). Composition root: `PlayerDataBootstrapper`. Sibling — references only Core/Runtime. |
+| `GameFramework.Platform` | Platform identity, device information/capabilities, screen/orientation/safe-area, clipboard, URL opening, app-store linking, network reachability, and Camera/Microphone permissions (Phase 14). Composition root: `PlatformBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras`/`PlayerData` — references only Core/Runtime; deliberately does not re-implement Phase 5's application lifecycle or Phase 3's haptics. |
+| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, UI Navigation Catalog validation, Player Data diagnostics, and Platform diagnostics menu items. |
 | `GameFramework.Cameras.Cinemachine.Editor` | Editor-only; validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend references, duplicate controller ownership, an assigned Confiner with nothing to confine against). Separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. |
 | Matching `*.Tests` / `*.Tests.Runtime` assemblies | EditMode/PlayMode test coverage per system (see Testing below). |
 
@@ -482,6 +507,18 @@ Full per-assembly reference tables and namespace listings live in
   (detected the same way `PersistenceServiceTests` already verifies Phase 2's own `.corrupt` marker
   behavior) triggers a `.bak` restore attempt, then falls back to that section's defaults — the
   profile still loads (`ProfileOperationResultKind.Corrupted`), nothing is silently destroyed.
+- **Mobile Platform & Device Services** (`IPlatformService`, Phase 14) — platform identity
+  (`PlatformType`, `IsMobile`/`IsAndroid`/`IsIOS`/`IsDesktop`), `IDeviceInfoService` (a cached
+  `PlatformDeviceInfo` snapshot plus `Supports(DeviceCapability)`), `IScreenService` (safe area/
+  orientation, an internal `ScreenSignalDriver` polling once per frame since Unity has no change
+  callback for either), `IClipboardService`, `IPlatformUrlService` (validated `Application.OpenURL`),
+  `IAppStoreService` (game-supplied `AppStoreConfig`, builds `market://`/`itms-apps://` URLs with no
+  native code), `INetworkReachabilityService` (`Application.internetReachability` passthrough),
+  `IPermissionService` (Camera/Microphone only, built on `Application.HasUserAuthorization`/
+  `RequestUserAuthorization`), and `IAppSettingsService` (Android only, via the framework's one
+  isolated `AndroidJavaObject` boundary, `Platform/Android/AndroidAppSettingsProvider`). References
+  only Core/Runtime; deliberately does not duplicate Phase 5's `IApplicationLifecycleService` or
+  Phase 3's `IHapticProvider` — see Framework.md's Phase 14 section for the full non-goal list.
 
 Complete API examples, edge cases, and design rationale for every system are documented in
 `Assets/GameFramework/Documentation/Framework.md` — treat that file as the authoritative reference.
@@ -653,6 +690,17 @@ Complete API examples, edge cases, and design rationale for every system are doc
   `OnApplicationPause` directly, so this calls the same internal handler `PlayerDataLifecycleDriver`
   forwards to). 51/51 Phase 13 tests pass (45 EditMode + 6 PlayMode); the full project suite (734
   EditMode + 135 PlayMode tests) was re-run after this phase with zero regressions.
+- Phase 14: `GameFramework.Platform.Tests.Runtime` (PlayMode-only - `PlatformBootstrapper.Awake` calls
+  `DontDestroyOnLoad`, and `ScreenService`/`PermissionService` each create their own
+  `DontDestroyOnLoad` driver GameObject, both only legal in Play Mode). Covers bootstrap registration
+  of all nine services, `PlatformService` identity in the Editor, `DeviceInfoService.Current`'s
+  snapshot values and `Supports` not throwing for any capability, `ScreenService` exposing live
+  values without throwing, `AppStoreService`/`PlatformUrlService`/`NetworkReachabilityService` pure
+  logic (URL validation, store URL construction for Android/iOS/missing-config/unsupported-platform,
+  reachability passthrough) via `public static` pure methods with no `Application.OpenURL` side
+  effect, `ClipboardService` set/get/has round-trips, and `PermissionService.RequestPermission`
+  invoking its callback exactly once. 36/36 Phase 14 tests pass; the full project suite (734 EditMode
+  + 171 PlayMode tests) was re-run after this phase with zero regressions.
 
 ## Packages / Dependencies
 
@@ -673,21 +721,24 @@ Assets/GameFramework/
 │                        State, SceneManagement, Time, Timers, Events, Persistence, Settings,
 │                        Input, Localization, Audio, Feedback, UI, PlayerSystems, Gameplay,
 │                        Performance, Progression, Unlocks, Rewards, Quests, GameFlow, Tutorials,
-│                        Presentation, Cameras, PlayerData); Cameras/Integration/Cinemachine/ holds
-│                        the optional GameFramework.Cameras.Cinemachine assembly; UI/Navigation/
+│                        Presentation, Cameras, PlayerData, Platform); Cameras/Integration/Cinemachine/
+│                        holds the optional GameFramework.Cameras.Cinemachine assembly; UI/Navigation/
 │                        holds the GameFramework.UI.Navigation assembly (Phase 12); PlayerData/
-│                        holds the GameFramework.PlayerData assembly (Phase 13)
+│                        holds the GameFramework.PlayerData assembly (Phase 13); Platform/ holds the
+│                        GameFramework.Platform assembly (Phase 14), with Android/ isolating the one
+│                        AndroidJavaObject boundary
 ├── Editor/              Editor-only tooling (Localization, Gameplay config, Quest content,
 │                        Tutorial content, Feedback content, Camera Configuration, UI Navigation
-│                        Catalog, and Player Data diagnostics); Cameras/Cinemachine/ holds the
-│                        optional .Cinemachine.Editor assembly
+│                        Catalog, Player Data diagnostics, and Platform diagnostics); Cameras/Cinemachine/
+│                        holds the optional .Cinemachine.Editor assembly
 ├── Samples/              Phase0Demo/ … Phase4Demo/ (one per phase), Phase5Benchmark/,
 │                         Phase6Demo/, Phase7Demo/, Phase9Demo/, Phase10Demo/, Phase11Demo/, Phase12Demo/
 │                         (each with authored Content/ ScriptableObject/prefab assets; Phase11Demo/
 │                         additionally has a second scene, Phase11CinemachineDemo.unity, for the
-│                         Cinemachine integration) — Phase 8 and Phase 13 intentionally have no sample
-│                         yet (Phase 8: see Framework.md's Phase 8 section for why; Phase 13: its
-│                         infrastructure is fully exercised by its own test suite instead)
+│                         Cinemachine integration) — Phase 8, Phase 13, and Phase 14 intentionally have
+│                         no sample yet (Phase 8: see Framework.md's Phase 8 section for why; Phase 13/
+│                         14: each phase's infrastructure is fully exercised by its own test suite
+│                         instead)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```
