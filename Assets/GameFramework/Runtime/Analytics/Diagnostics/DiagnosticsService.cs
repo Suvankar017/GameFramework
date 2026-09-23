@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using GameFramework.Platform;
+using GameFramework.Runtime.Security;
 using GameFramework.Runtime.Services;
 using UnityEngine;
 using Log = GameFramework.Runtime.Diagnostics.Log;
@@ -23,6 +24,13 @@ namespace GameFramework.Analytics.Diagnostics
     public sealed class DiagnosticsService : IDiagnosticsService
     {
         private const string LogCategory = "Diagnostics";
+
+        /// <summary>Phase 19 bound on the number of distinct context keys and of tag keys each -
+        /// diagnostic context is attached to every report, so it must not grow without limit.</summary>
+        public const int MaxContextEntries = 64;
+
+        /// <summary>Phase 19 bound on one context/tag value and one breadcrumb message.</summary>
+        public const int MaxValueLength = 1024;
 
         private readonly DiagnosticsConfiguration _configuration;
         private readonly ICrashReportingProvider _provider;
@@ -79,27 +87,11 @@ namespace GameFramework.Analytics.Diagnostics
         }
 
         public void AddBreadcrumb(string category, string message) =>
-            _breadcrumbs.Add(new Breadcrumb(category ?? string.Empty, message ?? string.Empty, DateTime.UtcNow));
+            _breadcrumbs.Add(new Breadcrumb(category ?? string.Empty, Sanitize(message), DateTime.UtcNow));
 
-        public void SetContext(string key, string value)
-        {
-            if (string.IsNullOrEmpty(key))
-            {
-                return;
-            }
+        public void SetContext(string key, string value) => SetBounded(_context, "context", key, value);
 
-            _context[key] = value ?? string.Empty;
-        }
-
-        public void SetTag(string key, string value)
-        {
-            if (string.IsNullOrEmpty(key))
-            {
-                return;
-            }
-
-            _tags[key] = value ?? string.Empty;
-        }
+        public void SetTag(string key, string value) => SetBounded(_tags, "tag", key, value);
 
         public void SetUserId(string userId)
         {
@@ -137,6 +129,9 @@ namespace GameFramework.Analytics.Diagnostics
                 return;
             }
 
+            // Redacted before it is logged or forwarded: an error message built from runtime data can
+            // carry a token/receipt/email the caller never meant to publish.
+            message = SensitiveDataRedactor.Redact(message);
             Log.Error(LogCategory, message);
 
             if (!IsEnabled)
@@ -149,8 +144,11 @@ namespace GameFramework.Analytics.Diagnostics
 
         public IReadOnlyList<Breadcrumb> GetBreadcrumbs() => _breadcrumbs.ToArray();
 
+        // The report's message is redacted; the Exception object itself is forwarded unchanged (it
+        // cannot be rewritten) - a crash-reporting adapter that serializes exception messages should
+        // apply SensitiveDataRedactor itself. See CLAUDE.md's Phase 19 section, "Logging redaction".
         private DiagnosticReport BuildReport(Exception exception, string message, ErrorCategory category) => new DiagnosticReport(
-            exception, message, category, DateTime.UtcNow,
+            exception, SensitiveDataRedactor.Redact(message), category, DateTime.UtcNow,
             new Dictionary<string, string>(_context), new Dictionary<string, string>(_tags), _breadcrumbs.ToArray());
 
         private void Report(DiagnosticReport report)
@@ -168,5 +166,34 @@ namespace GameFramework.Analytics.Diagnostics
         }
 
         private static void LogProviderFailure(Exception ex) => Log.Exception(ex, LogCategory);
+
+        /// <summary>Redacts sensitive key/value pairs and truncates. Values under a sensitive key
+        /// (<c>SetContext("auth_token", ...)</c>) are masked entirely.</summary>
+        private static string Sanitize(string value, string key = null)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            string redacted = SensitiveDataRedactor.RedactValue(key, SensitiveDataRedactor.Redact(value));
+            return redacted.Length <= MaxValueLength ? redacted : redacted.Substring(0, MaxValueLength);
+        }
+
+        private static void SetBounded(Dictionary<string, string> target, string kind, string key, string value)
+        {
+            if (string.IsNullOrEmpty(key))
+            {
+                return;
+            }
+
+            if (!target.ContainsKey(key) && target.Count >= MaxContextEntries)
+            {
+                Log.Warning(LogCategory, $"Diagnostic {kind} limit ({MaxContextEntries}) reached; '{key}' was not added.");
+                return;
+            }
+
+            target[key] = Sanitize(value, key);
+        }
     }
 }

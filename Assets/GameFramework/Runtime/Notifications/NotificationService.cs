@@ -6,6 +6,7 @@ using GameFramework.Notifications.Providers;
 using GameFramework.Performance.Mobile;
 using GameFramework.Runtime.Diagnostics;
 using GameFramework.Runtime.Events;
+using GameFramework.Runtime.Security;
 using GameFramework.Runtime.Services;
 using Log = GameFramework.Runtime.Diagnostics.Log;
 
@@ -59,25 +60,36 @@ namespace GameFramework.Notifications
             _provider.NotificationReceived += OnProviderNotificationReceived;
             _events.Subscribe<ApplicationResumedEvent>(OnApplicationResumed);
 
-            _provider.Initialize(success =>
+            try
             {
-                _providerReady = success;
-                PermissionStatus = _provider.GetPermissionStatus();
-
-                if (!success)
+                _provider.Initialize(success =>
                 {
-                    LastError = "Notification provider failed to initialize.";
-                    _log?.Log(LogLevel.Warning, LogCategory, LastError);
-                    return;
-                }
+                    _providerReady = success;
+                    PermissionStatus = _provider.GetPermissionStatus();
 
-                // Cold start: the application may have just been launched by the user tapping a
-                // notification - see CLAUDE.md's Phase 18 brief, section 21.
-                if (_provider.TryGetLaunchNotification(out NotificationOpenedInfo launchInfo))
-                {
-                    OnProviderNotificationOpened(launchInfo);
-                }
-            });
+                    if (!success)
+                    {
+                        LastError = "Notification provider failed to initialize.";
+                        _log?.Log(LogLevel.Warning, LogCategory, LastError);
+                        return;
+                    }
+
+                    // Cold start: the application may have just been launched by the user tapping a
+                    // notification - see CLAUDE.md's Phase 18 brief, section 21.
+                    if (_provider.TryGetLaunchNotification(out NotificationOpenedInfo launchInfo))
+                    {
+                        OnProviderNotificationOpened(launchInfo);
+                    }
+                });
+            }
+            catch (Exception exception)
+            {
+                // Provider failure isolation: notifications being unavailable must never stop the game
+                // (or the rest of the framework) from starting.
+                _providerReady = false;
+                LastError = "Notification provider threw during Initialize.";
+                _log?.Log(LogLevel.Error, LogCategory, $"{LastError} {exception.GetType().Name}: {exception.Message}");
+            }
         }
 
         public void Shutdown()
@@ -241,11 +253,35 @@ namespace GameFramework.Notifications
             return false;
         }
 
-        public void SimulateNotificationOpened(NotificationId id, NotificationPayload payloadOverride = null) =>
-            OnProviderNotificationOpened(BuildSimulatedInfo(id, payloadOverride));
+        public void SimulateNotificationOpened(NotificationId id, NotificationPayload payloadOverride = null)
+        {
+            if (IsSimulationAllowed(nameof(SimulateNotificationOpened)))
+            {
+                OnProviderNotificationOpened(BuildSimulatedInfo(id, payloadOverride));
+            }
+        }
 
-        public void SimulateNotificationReceived(NotificationId id, NotificationPayload payloadOverride = null) =>
-            OnProviderNotificationReceived(BuildSimulatedInfo(id, payloadOverride));
+        public void SimulateNotificationReceived(NotificationId id, NotificationPayload payloadOverride = null)
+        {
+            if (IsSimulationAllowed(nameof(SimulateNotificationReceived)))
+            {
+                OnProviderNotificationReceived(BuildSimulatedInfo(id, payloadOverride));
+            }
+        }
+
+        /// <summary>Phase 19 debug/release separation: simulation is a development tool, so a release
+        /// build ignores it (with an error, since calling it there is a shipped-debug-code bug) rather
+        /// than letting game or debug-menu code fabricate notification opens in production.</summary>
+        private bool IsSimulationAllowed(string operation)
+        {
+            if (BuildEnvironment.IsDevelopmentBuild)
+            {
+                return true;
+            }
+
+            _log?.Log(LogLevel.Error, LogCategory, $"{operation} is development-only and was ignored in this build.");
+            return false;
+        }
 
         public NotificationDiagnostics GetDiagnostics()
         {
@@ -303,14 +339,30 @@ namespace GameFramework.Notifications
 
         private void OnProviderNotificationOpened(NotificationOpenedInfo info)
         {
+            info = SanitizeInbound(info);
             NotificationOpened?.Invoke(info);
             _events.Publish(new NotificationOpenedEvent(info));
         }
 
         private void OnProviderNotificationReceived(NotificationOpenedInfo info)
         {
+            info = SanitizeInbound(info);
             NotificationReceived?.Invoke(info);
             _events.Publish(new NotificationReceivedEvent(info));
+        }
+
+        /// <summary>Trust boundary for inbound payloads - see <see cref="NotificationPayloadValidator"/>.
+        /// A malformed payload never reaches subscribers/routing; the open/receive itself is still
+        /// reported, with an empty payload, since it genuinely happened.</summary>
+        private NotificationOpenedInfo SanitizeInbound(NotificationOpenedInfo info)
+        {
+            if (NotificationPayloadValidator.Validate(info.Payload, out string reason))
+            {
+                return info;
+            }
+
+            _log?.Log(LogLevel.Warning, LogCategory, $"Notification '{info.Id}' payload rejected: {reason}");
+            return new NotificationOpenedInfo(info.Id, NotificationPayload.Empty, info.WasSimulated);
         }
     }
 }

@@ -62,6 +62,7 @@
   <Project Path="GameFramework.PlayerSystems.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase10Demo.csproj" />
   <Project Path="GameFramework.Samples.Phase3Demo.csproj" />
+  <Project Path="GameFramework.Editor.Tests.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Runtime.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase6Demo.csproj" />

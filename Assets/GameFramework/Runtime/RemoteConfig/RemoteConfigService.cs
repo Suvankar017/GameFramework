@@ -37,6 +37,19 @@ namespace GameFramework.RemoteConfig
         private const string CacheKey = "GameFramework.RemoteConfig.Cache";
         private const int CacheSaveVersion = 1;
 
+        /// <summary>Phase 19 payload bound: the most keys one snapshot (defaults + cache + fetch) may
+        /// hold. Generous for any real configuration; exists so a malformed/hostile payload cannot
+        /// grow the snapshot, its cache file, and every lookup without limit.</summary>
+        public const int MaxKeyCount = 4096;
+
+        /// <summary>Phase 19 payload bound on one string value (256 KB of UTF-16 text) - large enough
+        /// for a JSON blob stored as a string value, small enough that one bad value can't balloon
+        /// memory or the cache file.</summary>
+        public const int MaxStringValueLength = 262144;
+
+        /// <summary>Phase 19 bound on a key's length.</summary>
+        public const int MaxKeyLength = 256;
+
         private readonly RemoteConfigConfiguration _configuration;
         private readonly IRemoteConfigProvider _provider;
         private readonly Dictionary<string, RemoteConfigDefinition> _definitionsByKey = new Dictionary<string, RemoteConfigDefinition>(StringComparer.Ordinal);
@@ -150,24 +163,43 @@ namespace GameFramework.RemoteConfig
 
         private void InitializeProvider(Action onReady)
         {
-            _provider.Initialize(success =>
+            try
             {
-                _providerReady = success;
-                if (!success)
-                {
-                    LastError = "Remote config provider failed to initialize.";
-                    _log?.Log(LogLevel.Warning, LogCategory, LastError);
-                    SetState(RemoteConfigState.Failed);
-                    return;
-                }
+                _provider.Initialize(success => HandleProviderInitialized(success, onReady));
+            }
+            catch (Exception exception)
+            {
+                // Provider failure isolation: remote config being unavailable must never stop the game
+                // from starting - defaults (and any valid cache) are already active at this point.
+                HandleProviderException(exception, "Initialize");
+                _providerReady = false;
+                SetState(RemoteConfigState.Failed);
+            }
+        }
 
-                if (State == RemoteConfigState.Failed)
-                {
-                    SetState(ActiveSnapshot.Version > 0 ? RemoteConfigState.Active : RemoteConfigState.Ready);
-                }
+        private void HandleProviderInitialized(bool success, Action onReady)
+        {
+            _providerReady = success;
+            if (!success)
+            {
+                LastError = "Remote config provider failed to initialize.";
+                _log?.Log(LogLevel.Warning, LogCategory, LastError);
+                SetState(RemoteConfigState.Failed);
+                return;
+            }
 
-                onReady?.Invoke();
-            });
+            if (State == RemoteConfigState.Failed)
+            {
+                SetState(ActiveSnapshot.Version > 0 ? RemoteConfigState.Active : RemoteConfigState.Ready);
+            }
+
+            onReady?.Invoke();
+        }
+
+        private void HandleProviderException(Exception exception, string operation)
+        {
+            LastError = $"Remote config provider threw during {operation}.";
+            _log?.Log(LogLevel.Error, LogCategory, $"{LastError} {exception.GetType().Name}: {exception.Message}");
         }
 
         private void BeginFetch(Action<RemoteConfigFetchResult> onComplete)
@@ -183,19 +215,30 @@ namespace GameFramework.RemoteConfig
                 () => HandleFetchTimeout(generation, onComplete),
                 TimerTimeMode.Unscaled);
 
-            _provider.Fetch(_configuration.SupportedSchemaVersion, result =>
+            try
             {
-                if (generation != _fetchGeneration)
+                _provider.Fetch(_configuration.SupportedSchemaVersion, result =>
                 {
-                    // A late callback for a fetch this service already gave up on (timed out) - see
-                    // IRemoteConfigProvider.Fetch's remarks.
-                    return;
-                }
+                    if (generation != _fetchGeneration)
+                    {
+                        // A late callback for a fetch this service already gave up on (timed out) - see
+                        // IRemoteConfigProvider.Fetch's remarks.
+                        return;
+                    }
 
+                    _fetchTimeoutHandle?.Cancel();
+                    _fetchTimeoutHandle = null;
+                    HandleProviderResult(result, onComplete);
+                });
+            }
+            catch (Exception exception)
+            {
+                HandleProviderException(exception, "Fetch");
+                _fetchGeneration++; // Invalidate any callback the provider may still deliver.
                 _fetchTimeoutHandle?.Cancel();
                 _fetchTimeoutHandle = null;
-                HandleProviderResult(result, onComplete);
-            });
+                HandleProviderResult(RemoteConfigProviderResult.Failed(LastError), onComplete);
+            }
         }
 
         private void HandleFetchTimeout(int generation, Action<RemoteConfigFetchResult> onComplete)
@@ -258,8 +301,18 @@ namespace GameFramework.RemoteConfig
 
             if (_configuration.CacheEnabled)
             {
-                SaveCache(ActiveSnapshot);
-                _cacheStatus = RemoteConfigCacheStatus.Fresh;
+                // The snapshot is already validated and active; failing to persist it as the new
+                // last-known-good only loses offline availability, so it is reported, not propagated
+                // (and the previous cache file stays intact - see FilePersistenceStorage's atomic write).
+                try
+                {
+                    SaveCache(ActiveSnapshot);
+                    _cacheStatus = RemoteConfigCacheStatus.Fresh;
+                }
+                catch (Exception exception)
+                {
+                    _log?.Log(LogLevel.Error, LogCategory, $"Could not persist the last-known-good cache: {exception.GetType().Name}: {exception.Message}");
+                }
             }
 
             _events.Publish(new ConfigFetchSucceededEvent(ActiveSnapshot));
@@ -285,10 +338,26 @@ namespace GameFramework.RemoteConfig
                 return;
             }
 
-            RemoteConfigCacheData cache = _persistence.Load<RemoteConfigCacheData>(CacheKey, CacheSaveVersion, null);
-            if (cache == null || cache.Entries.Count == 0)
+            PersistenceLoadStatus loadStatus = _persistence.TryLoad(CacheKey, CacheSaveVersion, out RemoteConfigCacheData cache);
+            if (loadStatus.IsFailure())
+            {
+                // Corrupted/unreadable/newer cache file: fall back to local defaults (already active).
+                _cacheStatus = RemoteConfigCacheStatus.Corrupt;
+                _log?.Log(LogLevel.Warning, LogCategory, $"Discarding cached configuration: cache file unusable ({loadStatus}).");
+                return;
+            }
+
+            if (cache == null || cache.Entries == null || cache.Entries.Count == 0)
             {
                 _cacheStatus = RemoteConfigCacheStatus.NoCache;
+                return;
+            }
+
+            if (cache.FetchedAtUtcTicks <= 0 || cache.FetchedAtUtcTicks > DateTime.MaxValue.Ticks)
+            {
+                // Would otherwise throw from new DateTime(...) and abort this service's Initialize.
+                _cacheStatus = RemoteConfigCacheStatus.Corrupt;
+                _log?.Log(LogLevel.Warning, LogCategory, "Discarding cached configuration: invalid fetch timestamp.");
                 return;
             }
 
@@ -327,7 +396,7 @@ namespace GameFramework.RemoteConfig
             var cachedValues = new Dictionary<string, object>(cache.Entries.Count, StringComparer.Ordinal);
             foreach (RemoteConfigCacheData.Entry entry in cache.Entries)
             {
-                if (!string.IsNullOrEmpty(entry.Key))
+                if (entry != null && !string.IsNullOrEmpty(entry.Key))
                 {
                     cachedValues[entry.Key] = entry.Value.BoxedValue;
                 }
@@ -378,6 +447,27 @@ namespace GameFramework.RemoteConfig
             {
                 return RemoteConfigValidationResult.Invalid(
                     $"Schema version {schemaVersion} is newer than the supported version {_configuration.SupportedSchemaVersion}.");
+            }
+
+            if (candidateValues.Count > MaxKeyCount)
+            {
+                return RemoteConfigValidationResult.Invalid($"Configuration has {candidateValues.Count} keys; the maximum is {MaxKeyCount}.");
+            }
+
+            // Every value - declared or not - must be one of the supported primitive types, finite, and
+            // within size bounds. Undeclared keys stay allowed (a game may read them by type), but they
+            // are untrusted input like everything else in a remote payload.
+            foreach (KeyValuePair<string, object> pair in candidateValues)
+            {
+                if (string.IsNullOrEmpty(pair.Key) || pair.Key.Length > MaxKeyLength)
+                {
+                    return RemoteConfigValidationResult.Invalid("Configuration contains an empty or oversized key.");
+                }
+
+                if (!IsSupportedValue(pair.Value, out string reason))
+                {
+                    return RemoteConfigValidationResult.Invalid($"Key '{pair.Key}' {reason}");
+                }
             }
 
             foreach (RemoteConfigDefinition definition in _definitionList)
@@ -448,6 +538,38 @@ namespace GameFramework.RemoteConfig
                 case RemoteConfigValueType.Float: return value is float;
                 case RemoteConfigValueType.Double: return value is double;
                 default: return value is string;
+            }
+        }
+
+        private static bool IsSupportedValue(object value, out string reason)
+        {
+            switch (value)
+            {
+                case bool _:
+                case int _:
+                case long _:
+                    reason = null;
+                    return true;
+                case float f when float.IsNaN(f) || float.IsInfinity(f):
+                    reason = "is not a finite number.";
+                    return false;
+                case double d when double.IsNaN(d) || double.IsInfinity(d):
+                    // NaN would otherwise pass a range check (every comparison with NaN is false).
+                    reason = "is not a finite number.";
+                    return false;
+                case float _:
+                case double _:
+                    reason = null;
+                    return true;
+                case string s when s.Length > MaxStringValueLength:
+                    reason = $"exceeds the maximum string length of {MaxStringValueLength}.";
+                    return false;
+                case string _:
+                    reason = null;
+                    return true;
+                default:
+                    reason = $"has an unsupported value type ({value?.GetType().Name ?? "null"}).";
+                    return false;
             }
         }
 

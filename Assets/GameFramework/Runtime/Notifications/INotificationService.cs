@@ -69,7 +69,10 @@ namespace GameFramework.Notifications
         /// <see cref="NotificationOpenedInfo.WasSimulated"/> is always true; this never claims a real
         /// platform delivery, regardless of which provider is registered (including
         /// <c>NoOpNotificationProvider</c>, against which this still safely raises the event with an
-        /// empty payload unless <paramref name="payloadOverride"/> is supplied).
+        /// empty payload unless <paramref name="payloadOverride"/> is supplied). Phase 19: ignored (and
+        /// logged as an error) in a non-development build - see <c>Runtime.Security.BuildEnvironment</c>.
+        /// A simulated payload goes through the same <see cref="NotificationPayloadValidator"/> check as
+        /// a real one.
         /// </summary>
         void SimulateNotificationOpened(NotificationId id, NotificationPayload payloadOverride = null);
 

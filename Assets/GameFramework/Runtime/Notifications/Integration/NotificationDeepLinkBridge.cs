@@ -42,6 +42,14 @@ namespace GameFramework.Notifications.Integration
                 return; // A notification with no route is valid (e.g. "just open the app") - nothing to route.
             }
 
+            // Defense in depth: NotificationService already validates inbound payloads, but this bridge
+            // also receives events published by anything else - never splice an unvalidated route into
+            // a URI (it could otherwise inject a scheme/authority/query).
+            if (!NotificationPayloadValidator.Validate(payload, out _))
+            {
+                return;
+            }
+
             _deepLinks.Process(BuildRawUri(payload));
         }
 

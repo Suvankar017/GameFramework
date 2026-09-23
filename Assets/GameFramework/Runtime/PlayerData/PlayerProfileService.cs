@@ -49,6 +49,16 @@ namespace GameFramework.PlayerData
     /// <see cref="IPlayerDataSection.ResetToDefaults"/> - never left half-loaded, and the original
     /// corrupt bytes are still preserved under <c>".corrupt"</c> by Phase 2 itself.</para>
     ///
+    /// <para><b>Phase 19 hardening.</b> A section whose <see cref="IPlayerDataSection.Validate"/>
+    /// throws post-migration is treated exactly like unparseable data (backup first, then defaults);
+    /// the <c>.bak</c> key gets the section's migration chain too, so a backup written by an older
+    /// build is still restorable; a backup that is itself unusable is detected instead of silently
+    /// "restoring" defaults; restored data is written back over the unusable primary; profile
+    /// metadata and the profile index are backed up and restored the same way; and
+    /// <see cref="CreateProfile"/> re-adopts a profile whose metadata still exists on disk instead of
+    /// overwriting it, so a lost index can never cause <see cref="LoadDefaultProfile"/> to wipe
+    /// progress. Every recovery is reported structurally through <see cref="LastLoadRecoveries"/>.</para>
+    ///
     /// <para><b>Concurrency.</b> Every public command is guarded by a single "busy" flag and
     /// rejected with <see cref="ProfileOperationResultKind.AlreadyActive"/> while another is in
     /// progress, including a call issued synchronously from inside this service's own event
@@ -69,6 +79,11 @@ namespace GameFramework.PlayerData
         private const string CorruptSuffix = ".corrupt";
         private const int ProfileSchemaVersion = 1;
 
+        /// <summary>Generous on purpose: an id read back from the index that exceeds this is dropped as
+        /// invalid, so the limit only needs to keep "{prefix}{id}.{section}.bak.corrupt" within
+        /// <see cref="FilePersistenceStorage.MaxKeyLength"/>, not to constrain normal ids.</summary>
+        private const int MaxProfileIdLength = 100;
+
         private readonly Dictionary<Type, Func<IPlayerDataSection>> _factoriesByType = new Dictionary<Type, Func<IPlayerDataSection>>();
         private readonly Dictionary<string, Type> _typeById = new Dictionary<string, Type>();
         private readonly List<string> _sectionIdOrder = new List<string>();
@@ -82,6 +97,8 @@ namespace GameFramework.PlayerData
         private ISceneService _scene;
         private PlayerDataLifecycleDriver _driver;
 
+        private readonly List<SectionRecovery> _lastLoadRecoveries = new List<SectionRecovery>();
+
         private PlayerProfileIndexData _index = new PlayerProfileIndexData();
         private AutosavePolicy _autosavePolicy = AutosavePolicy.Default;
         private ITimerHandle _pendingDebounceTimer;
@@ -92,6 +109,7 @@ namespace GameFramework.PlayerData
         public bool IsDirty => ActiveProfile?.IsDirty ?? false;
         public ProfileOperationResult LastLoadResult { get; private set; } = ProfileOperationResult.Ok();
         public ProfileOperationResult LastSaveResult { get; private set; } = ProfileOperationResult.Ok();
+        public IReadOnlyList<SectionRecovery> LastLoadRecoveries => _lastLoadRecoveries;
         public bool EnableBackups { get; set; } = true;
 
         public AutosavePolicy AutosavePolicy
@@ -118,7 +136,7 @@ namespace GameFramework.PlayerData
             registry.TryGet(out _log);
             registry.TryGet(out _scene);
 
-            _index = _persistence.Load(IndexKey, IndexVersion, new PlayerProfileIndexData());
+            _index = LoadIndex();
 
             if (_scene != null)
             {
@@ -199,6 +217,7 @@ namespace GameFramework.PlayerData
 
             string id = probe.Id;
             Guard.NotNullOrEmpty(id, $"{type.Name}.Id");
+            ValidateSectionId(id, type);
 
             if (_typeById.ContainsKey(id))
             {
@@ -556,6 +575,19 @@ namespace GameFramework.PlayerData
                 return ProfileOperationResult.AlreadyExists($"Profile '{id}' already exists.");
             }
 
+            // Data loss guard: profile data on disk that the index doesn't list means the index was
+            // lost/corrupted (DeleteProfile removes the metadata key first, so a genuinely deleted
+            // profile never looks like this). Re-adopt it instead of overwriting every section with
+            // fresh defaults - e.g. LoadDefaultProfile after an index failure must not wipe progress.
+            if (_persistence.Exists(BuildMetadataKey(id)))
+            {
+                _index.ProfileIds.Add(id.Value);
+                PersistIndex();
+                _log?.Log(LogLevel.Warning, LogCategory,
+                    $"Profile '{id}' had data on disk but was missing from the profile index; re-registered it instead of overwriting.");
+                return ProfileOperationResult.Ok("Recovered existing profile data that was missing from the index.");
+            }
+
             Dictionary<Type, IPlayerDataSection> sections = BuildFreshSections();
             PlayerProfileMetadata metadata = PlayerProfileMetadata.CreateNew(id, ProfileSchemaVersion);
 
@@ -564,8 +596,10 @@ namespace GameFramework.PlayerData
             foreach (KeyValuePair<Type, IPlayerDataSection> pair in sections)
             {
                 IPlayerDataSection section = pair.Value;
-                ForwardPendingMigrations(id, section.Id);
-                section.Save(_persistence, BuildSectionKey(id, section.Id));
+                string sectionKey = BuildSectionKey(id, section.Id);
+                ForwardPendingMigrations(sectionKey, section.Id);
+                ForwardPendingMigrations(sectionKey + BackupSuffix, section.Id);
+                section.Save(_persistence, sectionKey);
             }
 
             _index.ProfileIds.Add(id.Value);
@@ -590,41 +624,32 @@ namespace GameFramework.PlayerData
 
             Dictionary<Type, IPlayerDataSection> sections = BuildFreshSections();
             var corruptedDetails = new List<string>();
+            _lastLoadRecoveries.Clear();
 
-            string metaKey = BuildMetadataKey(id);
-            PlayerProfileMetadata metadata = _persistence.Load(metaKey, MetadataVersion, (PlayerProfileMetadata)null);
-            if (metadata == null)
-            {
-                PlayerProfileMetadata backupMetadata = _persistence.Load(metaKey + BackupSuffix, MetadataVersion, (PlayerProfileMetadata)null);
-                if (backupMetadata != null)
-                {
-                    metadata = backupMetadata;
-                    corruptedDetails.Add("metadata (restored from backup)");
-                }
-                else
-                {
-                    metadata = PlayerProfileMetadata.CreateNew(id, ProfileSchemaVersion);
-                    corruptedDetails.Add("metadata (reset to defaults)");
-                }
-            }
+            PlayerProfileMetadata metadata = LoadMetadataWithRecovery(id, corruptedDetails);
 
             foreach (KeyValuePair<Type, IPlayerDataSection> pair in sections)
             {
                 IPlayerDataSection section = pair.Value;
-                ForwardPendingMigrations(id, section.Id);
                 string key = BuildSectionKey(id, section.Id);
+                ForwardPendingMigrations(key, section.Id);
+                ForwardPendingMigrations(key + BackupSuffix, section.Id);
 
                 try
                 {
-                    if (TryLoadSectionWithRecovery(id, section, key, out string detail))
+                    if (TryLoadSectionWithRecovery(id, section, key, out SectionRecoveryKind recovery))
                     {
-                        corruptedDetails.Add(detail);
+                        _lastLoadRecoveries.Add(new SectionRecovery(section.Id, recovery));
+                        corruptedDetails.Add($"{section.Id} ({DescribeRecovery(recovery)})");
                     }
                 }
                 catch (Exception exception)
                 {
+                    // Last-resort isolation: a section's own ResetToDefaults/Validate throwing must not
+                    // abort loading every other section.
                     _log?.LogException(exception, LogCategory);
                     section.ResetToDefaults();
+                    _lastLoadRecoveries.Add(new SectionRecovery(section.Id, SectionRecoveryKind.ResetToDefaults));
                     corruptedDetails.Add($"{section.Id} (reset to defaults after validation failure)");
                 }
             }
@@ -700,7 +725,16 @@ namespace GameFramework.PlayerData
             profile.Metadata.LastModifiedAtUtc = DateTime.UtcNow.ToString("O");
             try
             {
-                _persistence.Save(BuildMetadataKey(profile.Id), profile.Metadata, MetadataVersion);
+                string metaKey = BuildMetadataKey(profile.Id);
+                if (EnableBackups &&
+                    _persistence.TryLoad(metaKey, MetadataVersion, out PlayerProfileMetadata onDisk).IsSuccess())
+                {
+                    // Only a verified-good copy ever becomes the backup - a corrupted primary must
+                    // never overwrite the last good .bak.
+                    _persistence.Save(metaKey + BackupSuffix, onDisk, MetadataVersion);
+                }
+
+                _persistence.Save(metaKey, profile.Metadata, MetadataVersion);
             }
             catch (Exception exception)
             {
@@ -727,7 +761,41 @@ namespace GameFramework.PlayerData
             return result;
         }
 
-        private bool TryLoadSectionWithRecovery(ProfileId profileId, IPlayerDataSection section, string key, out string detail)
+        /// <summary>
+        /// Load order: primary → <c>.bak</c> → defaults (CLAUDE.md's Phase 19 section, "Load
+        /// pipeline"). Each attempt counts as failed if persistence reported a failure (detected by a
+        /// fresh <c>.corrupt</c> marker - see the class remarks) <i>or</i> the section's own
+        /// <see cref="IPlayerDataSection.Validate"/> threw post-migration, so semantically invalid
+        /// data falls back to the backup exactly like unparseable data does. Returns true (with the
+        /// recovery performed) only when the primary was unusable.
+        /// </summary>
+        private bool TryLoadSectionWithRecovery(ProfileId profileId, IPlayerDataSection section, string key, out SectionRecoveryKind recovery)
+        {
+            recovery = default;
+
+            if (TryLoadSectionFrom(section, key))
+            {
+                return false;
+            }
+
+            string backupKey = key + BackupSuffix;
+            if (_persistence.Exists(backupKey) && TryLoadSectionFrom(section, backupKey))
+            {
+                _log?.Log(LogLevel.Warning, LogCategory,
+                    $"Section '{section.Id}' for profile '{profileId}' was unusable; restored from backup.");
+                RepairPrimaryFromLoadedSection(section, key);
+                recovery = SectionRecoveryKind.RestoredFromBackup;
+                return true;
+            }
+
+            _log?.Log(LogLevel.Error, LogCategory,
+                $"Section '{section.Id}' for profile '{profileId}' is unusable and has no usable backup; reset to defaults.");
+            section.ResetToDefaults();
+            recovery = SectionRecoveryKind.ResetToDefaults;
+            return true;
+        }
+
+        private bool TryLoadSectionFrom(IPlayerDataSection section, string key)
         {
             string corruptKey = key + CorruptSuffix;
             if (_persistence.Exists(corruptKey))
@@ -735,37 +803,131 @@ namespace GameFramework.PlayerData
                 _persistence.Delete(corruptKey);
             }
 
-            section.Load(_persistence, key);
-
-            if (!_persistence.Exists(corruptKey))
+            try
             {
-                detail = null;
+                section.Load(_persistence, key);
+            }
+            catch (Exception exception)
+            {
+                _log?.LogException(exception, LogCategory);
                 return false;
             }
 
-            string backupKey = key + BackupSuffix;
-            if (_persistence.Exists(backupKey))
+            return !_persistence.Exists(corruptKey);
+        }
+
+        /// <summary>Writes backup-restored data back over the unusable primary so the next load
+        /// doesn't depend on the backup again. The unusable primary bytes are already preserved under
+        /// <c>.corrupt</c>, and the good <c>.bak</c> is left as-is (the next dirty save's
+        /// <see cref="IPlayerDataSection.CreateBackup"/> refreshes it from this repaired primary).</summary>
+        private void RepairPrimaryFromLoadedSection(IPlayerDataSection section, string key)
+        {
+            try
             {
-                try
+                section.Save(_persistence, key);
+            }
+            catch (Exception exception)
+            {
+                // The restored data is still loaded in memory and will be saved on the next dirty save;
+                // report the failed repair rather than fail the load.
+                _log?.LogException(exception, LogCategory);
+            }
+        }
+
+        private PlayerProfileMetadata LoadMetadataWithRecovery(ProfileId id, List<string> corruptedDetails)
+        {
+            string metaKey = BuildMetadataKey(id);
+            PersistenceLoadStatus status = _persistence.TryLoad(metaKey, MetadataVersion, out PlayerProfileMetadata metadata);
+            if (status.IsSuccess())
+            {
+                return NormalizeMetadata(metadata, id);
+            }
+
+            if (_persistence.TryLoad(metaKey + BackupSuffix, MetadataVersion, out PlayerProfileMetadata backup).IsSuccess())
+            {
+                _lastLoadRecoveries.Add(new SectionRecovery(SectionRecovery.MetadataSectionId, SectionRecoveryKind.RestoredFromBackup));
+                corruptedDetails.Add("metadata (restored from backup)");
+                return NormalizeMetadata(backup, id);
+            }
+
+            _lastLoadRecoveries.Add(new SectionRecovery(SectionRecovery.MetadataSectionId, SectionRecoveryKind.ResetToDefaults));
+            corruptedDetails.Add("metadata (reset to defaults)");
+            return PlayerProfileMetadata.CreateNew(id, ProfileSchemaVersion);
+        }
+
+        /// <summary>Post-load validation of framework-owned metadata: the id stored inside the file
+        /// must match the key it was loaded from (a copied/renamed file must not masquerade as another
+        /// profile), and timestamps are only ever informational, so missing ones are filled rather
+        /// than treated as corruption.</summary>
+        private PlayerProfileMetadata NormalizeMetadata(PlayerProfileMetadata metadata, ProfileId id)
+        {
+            if (!string.Equals(metadata.ProfileId, id.Value, StringComparison.Ordinal))
+            {
+                _log?.Log(LogLevel.Warning, LogCategory,
+                    $"Metadata for profile '{id}' carried a different stored id; corrected to match its storage key.");
+                metadata.ProfileId = id.Value;
+            }
+
+            string now = DateTime.UtcNow.ToString("O");
+            if (string.IsNullOrEmpty(metadata.CreatedAtUtc))
+            {
+                metadata.CreatedAtUtc = now;
+            }
+
+            if (string.IsNullOrEmpty(metadata.LastModifiedAtUtc))
+            {
+                metadata.LastModifiedAtUtc = now;
+            }
+
+            return metadata;
+        }
+
+        /// <summary>Index load order: primary → <c>.bak</c> → empty. An empty index after a failure
+        /// is safe because <see cref="CreateCore"/> re-adopts any profile whose metadata still exists
+        /// on disk instead of overwriting it.</summary>
+        private PlayerProfileIndexData LoadIndex()
+        {
+            PersistenceLoadStatus status = _persistence.TryLoad(IndexKey, IndexVersion, out PlayerProfileIndexData index);
+            if (!status.IsSuccess() && status != PersistenceLoadStatus.Missing)
+            {
+                if (_persistence.TryLoad(IndexKey + BackupSuffix, IndexVersion, out PlayerProfileIndexData backup).IsSuccess())
                 {
-                    section.Load(_persistence, backupKey);
-                    _log?.Log(LogLevel.Warning, LogCategory,
-                        $"Section '{section.Id}' for profile '{profileId}' was corrupted; restored from backup.");
-                    detail = $"{section.Id} (restored from backup)";
-                    return true;
+                    _log?.Log(LogLevel.Warning, LogCategory, $"Profile index was unusable ({status}); restored from backup.");
+                    index = backup;
                 }
-                catch (Exception exception)
+                else
                 {
-                    _log?.LogException(exception, LogCategory);
+                    _log?.Log(LogLevel.Error, LogCategory,
+                        $"Profile index was unusable ({status}) and has no usable backup; existing profiles will be re-adopted when created/loaded by id.");
+                    index = null;
                 }
             }
 
-            _log?.Log(LogLevel.Error, LogCategory,
-                $"Section '{section.Id}' for profile '{profileId}' is corrupted and has no usable backup; reset to defaults.");
-            section.ResetToDefaults();
-            detail = $"{section.Id} (reset to defaults)";
-            return true;
+            return SanitizeIndex(index ?? new PlayerProfileIndexData());
         }
+
+        /// <summary>Drops null/empty/duplicate/unsafe ids from a loaded index rather than letting one
+        /// bad entry throw from <see cref="ListProfiles"/> or address an unsafe storage key.</summary>
+        private PlayerProfileIndexData SanitizeIndex(PlayerProfileIndexData index)
+        {
+            if (index.ProfileIds == null)
+            {
+                index.ProfileIds = new List<string>();
+                return index;
+            }
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            int removed = index.ProfileIds.RemoveAll(value => !IsSafeProfileIdValue(value) || !seen.Add(value));
+            if (removed > 0)
+            {
+                _log?.Log(LogLevel.Warning, LogCategory, $"Removed {removed} invalid or duplicate entr(y/ies) from the profile index.");
+            }
+
+            return index;
+        }
+
+        private static string DescribeRecovery(SectionRecoveryKind kind) =>
+            kind == SectionRecoveryKind.RestoredFromBackup ? "restored from backup" : "reset to defaults";
 
         private Dictionary<Type, IPlayerDataSection> BuildFreshSections()
         {
@@ -790,9 +952,11 @@ namespace GameFramework.PlayerData
             return result;
         }
 
-        private void ForwardPendingMigrations(ProfileId id, string sectionId)
+        /// <summary>Registers a section's migrations against one concrete storage key. Called for both
+        /// the primary key and its <c>.bak</c> - a backup written by an older build is at an older
+        /// version too, and without its own migration chain it could never be restored.</summary>
+        private void ForwardPendingMigrations(string key, string sectionId)
         {
-            string key = BuildSectionKey(id, sectionId);
             if (!_migrationsForwardedForKey.Add(key))
             {
                 return;
@@ -816,7 +980,22 @@ namespace GameFramework.PlayerData
 
         private bool ContainsInIndex(ProfileId id) => _index.ProfileIds.Contains(id.Value);
 
-        private void PersistIndex() => _persistence.Save(IndexKey, _index, IndexVersion);
+        /// <summary>Writes the index and an identical <c>.bak</c> copy. The index is tiny and changes
+        /// only on create/delete, so a full second write is cheaper than any cleverer scheme - and
+        /// losing it is what would otherwise make every profile look nonexistent.</summary>
+        private void PersistIndex()
+        {
+            _persistence.Save(IndexKey, _index, IndexVersion);
+            try
+            {
+                _persistence.Save(IndexKey + BackupSuffix, _index, IndexVersion);
+            }
+            catch (Exception exception)
+            {
+                // The primary write succeeded; a failed backup only reduces future recoverability.
+                _log?.LogException(exception, LogCategory);
+            }
+        }
 
         /// <summary>Internal (not private) purely so tests can pre-seed/inspect a profile's raw
         /// persisted state without duplicating this format - see <c>MigrationTests</c>/
@@ -832,20 +1011,48 @@ namespace GameFramework.PlayerData
                 throw new ArgumentException("Profile id must not be null or empty.", nameof(id));
             }
 
-            char[] invalidChars = Path.GetInvalidFileNameChars();
-            string value = id.Value;
-            for (int i = 0; i < value.Length; i++)
+            if (!IsSafeProfileIdValue(id.Value))
             {
-                for (int j = 0; j < invalidChars.Length; j++)
-                {
-                    if (value[i] == invalidChars[j])
-                    {
-                        throw new ArgumentException(
-                            $"Profile id '{value}' contains a character ('{value[i]}') that is not safe to use in a storage key.",
-                            nameof(id));
-                    }
-                }
+                throw new ArgumentException(
+                    $"Profile id '{id.Value}' is longer than {MaxProfileIdLength} characters or contains a character that is not safe to use in a storage key.",
+                    nameof(id));
             }
+        }
+
+        /// <summary>Same rule for a caller-supplied id and an id read back from the (untrusted) index
+        /// file. Uses <see cref="FilePersistenceStorage.ValidateKey"/>'s cross-platform character set
+        /// (not the per-OS <see cref="Path.GetInvalidFileNameChars"/>) so an id accepted in the Editor
+        /// is always accepted on device.</summary>
+        private static bool IsSafeProfileIdValue(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length > MaxProfileIdLength)
+            {
+                return false;
+            }
+
+            try
+            {
+                FilePersistenceStorage.ValidateKey(value);
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                // ValidateKey reports by throwing; here "unsafe" is an expected answer, not an error.
+                return false;
+            }
+        }
+
+        /// <summary>A section id becomes part of a storage key, so it must be key-safe and must not
+        /// collide with the profile's own sibling keys (<c>"{profileId}.Meta"</c>).</summary>
+        private static void ValidateSectionId(string id, Type sectionType)
+        {
+            if (string.Equals(id, MetadataKeySuffix.TrimStart('.'), StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Section '{sectionType.Name}' uses the reserved id '{id}', which would share a storage key with profile metadata.");
+            }
+
+            FilePersistenceStorage.ValidateKey(id);
         }
 
         private static void DestroySafely(GameObject go)

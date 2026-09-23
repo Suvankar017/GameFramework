@@ -108,13 +108,9 @@ namespace GameFramework.PlayerData
 
         void IPlayerDataSection.CreateBackup(IPersistenceService persistence, string storageKey, string backupKey)
         {
-            if (!persistence.Exists(storageKey))
-            {
-                return;
-            }
-
-            TData current = persistence.Load(storageKey, Version, (TData)null);
-            if (current == null)
+            // Only data that currently loads cleanly becomes the backup: if the primary has gone bad
+            // since it was written, the existing .bak is the last good copy and must not be replaced.
+            if (!persistence.TryLoad(storageKey, Version, out TData current).IsSuccess())
             {
                 return;
             }

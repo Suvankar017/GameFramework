@@ -23,6 +23,10 @@ namespace GameFramework.Monetization.Entitlements
 
         private readonly Dictionary<string, EntitlementState> _entitlements = new Dictionary<string, EntitlementState>(StringComparer.Ordinal);
 
+        // Runtime-only, never persisted: ids a provider-backed flow (purchase/restore/sync) reported in
+        // this process. Deliberately not saved, so editing the save file can never manufacture it.
+        private readonly HashSet<string> _verifiedThisSession = new HashSet<string>(StringComparer.Ordinal);
+
         private IPersistenceService _persistence;
         private IEventService _events;
         private ILoggingService _log;
@@ -58,6 +62,8 @@ namespace GameFramework.Monetization.Entitlements
             return state.IsCurrentlyActive(DateTime.UtcNow);
         }
 
+        public bool IsVerifiedThisSession(EntitlementId id) => id.IsValid && _verifiedThisSession.Contains(id.Value);
+
         public EntitlementState GetEntitlement(EntitlementId id)
         {
             if (id.IsValid && _entitlements.TryGetValue(id.Value, out EntitlementState state))
@@ -77,6 +83,11 @@ namespace GameFramework.Monetization.Entitlements
             }
 
             _entitlements[id.Value] = new EntitlementState(id, true, expirationUtc, isAutoRenewing, source);
+            if (source != EntitlementSource.Granted)
+            {
+                _verifiedThisSession.Add(id.Value);
+            }
+
             _isDirty = true;
             RaiseChanged(id, true);
         }
@@ -110,6 +121,7 @@ namespace GameFramework.Monetization.Entitlements
 
                 _entitlements[reported.Id.Value] = new EntitlementState(
                     reported.Id, reported.IsOwned, reported.ExpirationUtc, reported.IsAutoRenewing, EntitlementSource.Restored);
+                _verifiedThisSession.Add(reported.Id.Value);
                 _isDirty = true;
                 RaiseChanged(reported.Id, reported.IsOwned);
             }
@@ -139,17 +151,42 @@ namespace GameFramework.Monetization.Entitlements
         {
             EntitlementSaveData data = _persistence.Load(SaveKey, SaveVersion, new EntitlementSaveData());
             _entitlements.Clear();
+            _verifiedThisSession.Clear();
 
-            foreach (EntitlementSaveData.Entry entry in data.Entries)
+            if (data.Entries != null)
             {
-                if (string.IsNullOrEmpty(entry.Id))
+                foreach (EntitlementSaveData.Entry entry in data.Entries)
                 {
-                    continue;
-                }
+                    if (entry == null || string.IsNullOrEmpty(entry.Id))
+                    {
+                        continue;
+                    }
 
-                DateTime? expiration = entry.ExpirationUtcTicks > 0 ? new DateTime(entry.ExpirationUtcTicks, DateTimeKind.Utc) : (DateTime?)null;
-                _entitlements[entry.Id] = new EntitlementState(
-                    new EntitlementId(entry.Id), entry.IsOwned, expiration, entry.IsAutoRenewing, (EntitlementSource)entry.Source);
+                    // Post-load validation: out-of-range ticks would make new DateTime(...) throw and
+                    // abort Initialize; an unknown source value is not a defined enum member. Repair both
+                    // in place rather than trusting a user-editable file.
+                    DateTime? expiration = null;
+                    if (entry.ExpirationUtcTicks > 0)
+                    {
+                        if (entry.ExpirationUtcTicks <= DateTime.MaxValue.Ticks)
+                        {
+                            expiration = new DateTime(entry.ExpirationUtcTicks, DateTimeKind.Utc);
+                        }
+                        else
+                        {
+                            // Treat an unrepresentable expiration as already expired - never as "forever".
+                            expiration = DateTime.MinValue;
+                            _log?.Log(LogLevel.Warning, LogCategory, $"Entitlement '{entry.Id}' had an invalid expiration; treated as expired.");
+                        }
+                    }
+
+                    EntitlementSource source = Enum.IsDefined(typeof(EntitlementSource), entry.Source)
+                        ? (EntitlementSource)entry.Source
+                        : EntitlementSource.Granted;
+
+                    _entitlements[entry.Id] = new EntitlementState(
+                        new EntitlementId(entry.Id), entry.IsOwned, expiration, entry.IsAutoRenewing, source);
+                }
             }
 
             _isDirty = false;

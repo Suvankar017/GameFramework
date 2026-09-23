@@ -98,15 +98,26 @@ namespace GameFramework.Monetization.Ads
             _events.Subscribe<ApplicationResumedEvent>(OnApplicationResumed);
 
             State = MonetizationProviderState.Initializing;
-            _provider.Initialize(success =>
+            try
             {
-                State = success ? MonetizationProviderState.Initialized : MonetizationProviderState.Failed;
-                if (!success)
+                _provider.Initialize(success =>
                 {
-                    _lastError = "Provider initialization failed.";
-                    _log?.Log(LogLevel.Warning, LogCategory, "Ad provider failed to initialize.");
-                }
-            });
+                    State = success ? MonetizationProviderState.Initialized : MonetizationProviderState.Failed;
+                    if (!success)
+                    {
+                        _lastError = "Provider initialization failed.";
+                        _log?.Log(LogLevel.Warning, LogCategory, "Ad provider failed to initialize.");
+                    }
+                });
+            }
+            catch (Exception exception)
+            {
+                // Provider failure isolation: an ad SDK failing to start leaves ads unavailable, it does
+                // not fail this service's (or the framework's) startup.
+                State = MonetizationProviderState.Failed;
+                _lastError = "Ad provider threw during Initialize.";
+                _log?.Log(LogLevel.Error, LogCategory, $"{_lastError} {exception.GetType().Name}: {exception.Message}");
+            }
         }
 
         public void Shutdown()

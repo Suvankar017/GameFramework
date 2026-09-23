@@ -1,6 +1,7 @@
 using GameFramework.Notifications.Providers;
 using GameFramework.Notifications.Providers.Mock;
 using GameFramework.Runtime.Bootstrap;
+using GameFramework.Runtime.Security;
 using GameFramework.Runtime.Services;
 using UnityEngine;
 
@@ -38,9 +39,12 @@ namespace GameFramework.Notifications
         {
             base.RegisterServices(registry);
 
-            INotificationProvider provider = _useMockProvider
-                ? (INotificationProvider)new MockNotificationProvider(_mockSimulationMode)
-                : new NoOpNotificationProvider();
+            // Phase 19: the mock toggle is honored only in development builds - see DevelopmentProviderGuard.
+            INotificationProvider provider = DevelopmentProviderGuard.Select<INotificationProvider>(
+                _useMockProvider,
+                () => new MockNotificationProvider(_mockSimulationMode),
+                () => new NoOpNotificationProvider(),
+                nameof(NotificationsBootstrapper));
 
             registry.Register<INotificationService>(new NotificationService(provider));
         }

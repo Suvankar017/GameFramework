@@ -23,6 +23,17 @@ namespace GameFramework.Monetization.Entitlements
         /// <summary>Returns <see cref="EntitlementState.NotOwned"/> for an id with no record on file.</summary>
         EntitlementState GetEntitlement(EntitlementId id);
 
+        /// <summary>
+        /// Phase 19: true only if a provider-backed flow - a completed/restored purchase through
+        /// <c>PurchaseService</c>, or <see cref="SyncFromProvider"/> - reported this entitlement
+        /// during the current process. <see cref="HasEntitlement"/> answers from the locally persisted
+        /// cache, which is a convenience for offline/instant start and is <b>not</b> proof of payment
+        /// (a local file can be edited); this answers "has the store confirmed it since launch?". It
+        /// is never persisted, so no local data can make it true. Still client-side: a real guarantee
+        /// needs server-side receipt validation behind <c>IPurchaseValidator</c>.
+        /// </summary>
+        bool IsVerifiedThisSession(EntitlementId id);
+
         IReadOnlyList<EntitlementId> OwnedEntitlements { get; }
 
         /// <summary>Grants or refreshes an entitlement outside the purchase flow (a promo code, a

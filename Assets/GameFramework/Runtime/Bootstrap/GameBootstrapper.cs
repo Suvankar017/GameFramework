@@ -35,8 +35,21 @@ namespace GameFramework.Runtime.Bootstrap
 
         public event Action<BootstrapState> StateChanged;
 
+        /// <summary>
+        /// Services whose <see cref="IGameService.Initialize"/> threw during startup. Empty in a
+        /// healthy start. A failed service stays registered but is never marked initialized, so
+        /// <see cref="IServiceRegistry.TryGet{TService}"/> returns false for it (soft dependents
+        /// degrade) and <see cref="IServiceRegistry.Get{TService}"/> throws a message naming the real
+        /// cause (hard dependents fail too, and are recorded here in turn). Startup still reaches
+        /// <see cref="BootstrapState.Ready"/> - one optional provider failing must not take the whole
+        /// framework down - so a game that cannot run without a specific service checks this list (or
+        /// <c>TryGet</c>) and decides how to present the failure itself.
+        /// </summary>
+        public IReadOnlyList<ServiceInitializationFailure> InitializationFailures => _initializationFailures;
+
         private readonly ServiceRegistry _registry = new ServiceRegistry();
         private readonly List<IUpdatableService> _updatableServices = new List<IUpdatableService>();
+        private readonly List<ServiceInitializationFailure> _initializationFailures = new List<ServiceInitializationFailure>();
 
         private void Awake()
         {
@@ -111,11 +124,25 @@ namespace GameFramework.Runtime.Bootstrap
             IReadOnlyList<Type> order = _registry.RegistrationOrder;
             for (int i = order.Count - 1; i >= 0; i--)
             {
-                ((IGameService)_registry.GetInstance(order[i])).Shutdown();
+                if (!_registry.IsInitialized(order[i]))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    ((IGameService)_registry.GetInstance(order[i])).Shutdown();
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogError($"[Bootstrap] Service '{order[i].Name}' threw during Shutdown; continuing with the remaining services.");
+                    Debug.LogException(exception);
+                }
             }
 
             _registry.Clear();
             _updatableServices.Clear();
+            _initializationFailures.Clear();
 
             SetState(BootstrapState.Shutdown);
         }
@@ -136,7 +163,16 @@ namespace GameFramework.Runtime.Bootstrap
             foreach (Type serviceType in _registry.RegistrationOrder)
             {
                 var service = (IGameService)_registry.GetInstance(serviceType);
-                service.Initialize(_registry);
+                try
+                {
+                    service.Initialize(_registry);
+                }
+                catch (Exception exception)
+                {
+                    HandleInitializationFailure(serviceType, service, exception);
+                    continue;
+                }
+
                 _registry.MarkInitialized(serviceType);
 
                 if (service is IUpdatableService updatable)
@@ -171,6 +207,29 @@ namespace GameFramework.Runtime.Bootstrap
             registry.Register<IPersistenceService>(
                 new PersistenceService(new FilePersistenceStorage(), new JsonPersistenceSerializer()));
             registry.Register<ISettingsService>(new SettingsService());
+        }
+
+        private void HandleInitializationFailure(Type serviceType, IGameService service, Exception exception)
+        {
+            _registry.MarkInitializationFailed(serviceType);
+            _initializationFailures.Add(new ServiceInitializationFailure(serviceType, exception));
+
+            // Debug directly, not the Log facade: the failing service may be LoggingService itself.
+            Debug.LogError(
+                $"[Bootstrap] Service '{serviceType.Name}' failed to initialize and is unavailable. " +
+                "Services that resolve it softly will run without it; services that require it will also fail.");
+            Debug.LogException(exception);
+
+            // Give a half-initialized service the chance to release what it already created (driver
+            // GameObjects, event subscriptions) - it will never be shut down by Shutdown() otherwise.
+            try
+            {
+                service.Shutdown();
+            }
+            catch (Exception cleanupException)
+            {
+                Debug.LogWarning($"[Bootstrap] Cleanup of failed service '{serviceType.Name}' also threw: {cleanupException.GetType().Name}: {cleanupException.Message}");
+            }
         }
 
         private void SetState(BootstrapState state)

@@ -2417,3 +2417,110 @@ Crashlytics) — only the two provider seams plus deterministic No-Op/Mock provi
   services already follow. `Editor.Analytics.AnalyticsDiagnosticsMenu`/`AnalyticsEventSimulatorWindow`
   are the only places allowed to reach for `GameBootstrapper.Instance` (development-time-only,
   mirroring `MonetizationDiagnosticsMenu`'s existing precedent).
+
+---
+
+# 83. Phase 19 Security, Data Integrity & Production Hardening
+
+Phase 19 hardened the framework at its existing trust boundaries. It added no new assembly and no
+new registered service. It added three helpers in `GameFramework.Runtime.Security`
+(`SensitiveDataRedactor`, `BuildEnvironment`, `DevelopmentProviderGuard`) and one Editor tool
+(`Editor.Security.FrameworkPreflight` + its UI Toolkit window). The full threat model, trust
+boundaries, pipelines, limits, and rationale live in
+`Assets/GameFramework/Documentation/Framework.md`'s "Security, Data Integrity & Production
+Hardening" section. This section is the stable rule summary; that one is the living reference.
+
+**Client-side hardening improves integrity and reliability. It does not make locally stored game
+state authoritative, and it does not make it impossible to tamper with.**
+
+## Trust Boundary Rules
+
+* The following are untrusted and must be validated where they enter the framework, before they are
+  stored, routed, activated, or granted:
+  * deep-link URIs and parameters
+  * notification payloads
+  * remote configuration, whether fetched or cached
+  * provider callbacks
+  * every file under `Application.persistentDataPath`
+* A deep link or notification can *request* an action. It must never *authorize* one. No handler may
+  grant currency, entitlements, purchases, or progression directly from link or payload parameters.
+* Validate at boundaries: Editor time, startup, load, save, config activation, provider result, and
+  inbound input. Never validate per frame.
+
+## Persistence Rules
+
+* All save/load goes through `IPersistenceService`. Use `TryLoad` when the caller needs to distinguish
+  `Missing` from a failure (`Corrupted`, `UnsupportedVersion`, `MigrationMissing`, `MigrationFailed`,
+  `Unreadable`). `Load` still returns the default for every non-success outcome.
+* Do not remove or bypass the envelope `Checksum`. It is SHA-256 corruption detection, **not**
+  tamper-proofing: it is unkeyed and recomputable. Never describe it as security, and never add an
+  HMAC with a key shipped in the client.
+* Every load failure except `Missing`/`Unreadable` preserves raw bytes under `.corrupt` before a
+  fallback. Never delete or overwrite a user's primary save as part of *detecting* a problem.
+* `FilePersistenceStorage` writes are temp → flush → verify → `File.Replace` (rename-aside fallback
+  with `.old` recovery). Do not reintroduce delete-then-move, and do not write a save file directly.
+* Storage keys must pass `FilePersistenceStorage.ValidateKey`, the fixed cross-platform rule. Do not
+  build keys from untrusted input.
+* A migration must strictly advance the version and must not throw on valid input. The service
+  rejects non-advancing/overshooting/null-returning migrations instead of looping or accepting them.
+* Semantic validation (ranges, references) belongs to the data's owner:
+  `IPlayerDataSection.Validate`, or a service's own `Load`. Never add game-specific limits to the
+  framework.
+
+## Player Data Recovery Rules
+
+* Section load order is primary → `.bak` → defaults. A `Validate()` throw counts as a failed load.
+  Recover the smallest scope (one section), never the whole profile.
+* `CreateBackup` copies only data that currently loads cleanly. Never let a corrupted primary overwrite
+  the last good `.bak`.
+* `CreateProfile` re-adopts a profile whose metadata exists on disk. Do not remove this: it is what
+  stops a lost index from wiping progress.
+* Report recoveries through `LastLoadRecoveries`/`ProfileOperationResult`. Never show raw exception
+  text to players, and never add an automatic or hidden profile wipe.
+
+## Monetization Integrity Rules
+
+* Local entitlement data is not proof of payment. `HasEntitlement` is the offline cache.
+  `IsVerifiedThisSession` is true only for provider-reported entitlements in the current process and
+  must never be persisted.
+* Never grant for a product that is not in the catalog, or for a provider result whose `ProductId`
+  doesn't match the product being granted. Keep this check in `LocalPurchaseValidator`, and keep it
+  in any replacement `IPurchaseValidator`.
+* Provider calls stay wrapped at the service boundary. A provider exception becomes a
+  `Failed` state/result, never an unhandled exception out of a framework service.
+
+## Development/Production Separation Rules
+
+* Every bootstrapper that can select a mock/simulation provider must go through
+  `DevelopmentProviderGuard.Select`. In a non-development build, mocks are refused, the NoOp
+  fallback is used, and an error is logged. Never register a mock provider unconditionally.
+* Decide "development build" only via `BuildEnvironment` (`UNITY_EDITOR || DEVELOPMENT_BUILD`), never
+  via runtime heuristics. Development-only APIs (e.g. `INotificationService.Simulate*`) must no-op
+  with an error log in release builds.
+* Run **GameFramework → Security → Production Preflight** before a release build. It is read-only and
+  complements the per-system validators.
+
+## Logging, Diagnostics & Secrets Rules
+
+* Apply `SensitiveDataRedactor` at boundaries that can see untrusted or sensitive text:
+  * rejected-input logs
+  * diagnostic context, tags, and breadcrumbs
+  * error and report messages
+
+  Do not add it to `LoggingService.Log` globally, because that would cost every log call.
+* Never log raw save contents, full untrusted URIs, receipts, or tokens. Log the key/id, the status,
+  and a technical reason.
+* A Unity client cannot keep a secret. Real secrets belong server-side; ship only provider-issued
+  public client ids. Never hard-code credentials. If one is found, report its location only (never
+  the value) and flag it for rotation.
+* Do not encrypt ordinary game data or invent cryptography. If a genuine credential ever needs local
+  storage, put it behind a small framework interface backed by Android Keystore/iOS Keychain, isolated
+  under `Platform/Android`/`Platform/iOS`.
+
+## Startup Rules
+
+* `GameBootstrapper` isolates a throwing `Initialize`: it records the failure in
+  `InitializationFailures`, cleans up, and continues. It also isolates a throwing `Shutdown`. Services
+  must still resolve optional dependencies with `TryGet`, so one unavailable provider doesn't cascade.
+* Do not add retry loops or artificial delays to hide an initialization failure. A game that cannot
+  run without a service checks `InitializationFailures`/`TryGet` and presents the failure itself.

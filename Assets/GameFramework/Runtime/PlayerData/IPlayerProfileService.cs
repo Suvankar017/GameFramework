@@ -35,6 +35,11 @@ namespace GameFramework.PlayerData
         ProfileOperationResult LastLoadResult { get; }
         ProfileOperationResult LastSaveResult { get; }
 
+        /// <summary>Every recovery performed during the most recent profile load (empty for a clean
+        /// load) - the structured counterpart to a <see cref="ProfileOperationResultKind.Corrupted"/>
+        /// result's <see cref="ProfileOperationResult.Reason"/>. See <see cref="SectionRecovery"/>.</summary>
+        IReadOnlyList<SectionRecovery> LastLoadRecoveries { get; }
+
         /// <summary>Governs automatic saving - see <see cref="AutosavePolicy"/>. Assigning a new
         /// policy takes effect on the next dirty-marking mutation/trigger; it does not retroactively
         /// cancel or reschedule an autosave already pending.</summary>

@@ -4875,6 +4875,254 @@ notification tray, real OS permission-prompt UI, a real cold-start app-icon-tap 
 verified against a real device or provider - only the abstraction/orchestration layer and its mock
 provider have been tested.
 
+## Security, Data Integrity & Production Hardening
+
+Phase 19 hardens the framework that Phases 0–18 built. It does not redesign it. There is no new
+assembly and no new registered service. Every change sits at an existing trust boundary: the save
+pipeline, the profile loader, provider callbacks, remote payloads, inbound deep links and
+notification payloads, diagnostic output, bootstrap, and bootstrapper provider selection. Three
+small helpers were added under `Runtime/Security/` (namespace `GameFramework.Runtime.Security`, in
+the `GameFramework.Runtime` assembly), plus one Editor tool.
+
+> **Client-side hardening improves integrity and reliability. It does not make locally stored game
+> state authoritative, and it does not make it impossible to tamper with.**
+
+### Threat model
+
+| Class | Examples | What the framework does | What it cannot do |
+|---|---|---|---|
+| **A. Accidental corruption** | Process killed mid-save, truncated file, bit rot, malformed JSON | Atomic temp-file → verify → `File.Replace` write; SHA-256 envelope checksum; `.corrupt` preservation; primary → `.bak` → defaults recovery | Survive hardware failure beyond what `Flush(true)` and the OS provide |
+| **B. Invalid input** | Malformed/oversized deep link, hostile notification payload, NaN/oversized remote value | Structural validation before routing/activation; bounded sizes; reject instead of guessing | Decide what a *valid* route or value means for a specific game (handlers do that) |
+| **C. Version incompatibility** | Old save, save from a newer build, broken migration chain | `UnsupportedVersion`/`MigrationMissing`/`MigrationFailed` statuses; the original bytes are never modified by a failed migration; non-advancing migrations rejected | Migrate data without a registered migration |
+| **D. Provider failure** | Store/ad/analytics/remote-config/notification SDK throws or is unavailable | Provider calls wrapped at the service boundary; failure becomes a `Failed` state/result; bootstrap isolates a throwing `Initialize` | Make an unavailable provider work |
+| **E. Local tampering** | Edited save file, edited remote-config cache, edited entitlement cache | A tampered file whose checksum no longer matches is *detected as corrupt*; post-load validation repairs out-of-range data; `IsVerifiedThisSession` never comes from disk | **Stop** a determined user. The checksum is unkeyed, so anyone can recompute it. Local data is never proof of payment or progress |
+| **F. Sensitive-data leakage** | Token in a deep-link query, API key in an error message, email in diagnostic context | `SensitiveDataRedactor` at logging/diagnostic boundaries; preflight secret scan | Recognize a secret that has no identifying key name |
+
+Out of scope by design: DRM, anti-cheat, anti-reverse-engineering, custom cryptography, a
+receipt-validation or authentication server, fraud detection, and any backend at all.
+
+### Trust boundaries
+
+```text
+Trusted:    framework-generated state (in memory), validated local models,
+            authored ScriptableObject configuration (validated at Editor time)
+Untrusted:  deep-link URIs and parameters, notification payloads, remote configuration
+            (fetched or cached), provider callbacks (purchase/restore/ads), and every file under
+            Application.persistentDataPath (user-editable on rooted/jailbroken devices and backups)
+```
+
+Every untrusted input is validated at the point it enters the framework, before it is stored, routed,
+activated, or granted. A deep link or notification can *request* an action. It can never *authorize*
+one. No handler should grant currency, entitlements, purchases, or progression straight from link or
+payload parameters.
+
+### Save pipeline (`PersistenceService` + `FilePersistenceStorage`)
+
+```text
+Save:  validate (non-null data, non-empty payload) → serialize → SHA-256(version:payload)
+       → write "{file}.tmp" + Flush(true) → read back & compare → File.Replace(tmp, primary)
+       (fallback: primary → ".old", tmp → primary, delete ".old")
+Load:  read → parse envelope → verify checksum (absent = legacy, accepted)
+       → reject version > current → migrate step by step (reject throw/null/non-advancing)
+       → deserialize → reject null → caller's semantic Validate()
+```
+
+- `IPersistenceService.TryLoad<T>(key, version, out data)` is additive. It returns
+  `PersistenceLoadStatus`: `Loaded`, `Migrated`, `Missing`, `Corrupted`, `UnsupportedVersion`,
+  `MigrationMissing`, `MigrationFailed`, or `Unreadable`. `Load<T>` is now a thin wrapper that returns
+  the default for anything other than `Loaded`/`Migrated`, so every existing caller behaves as before.
+  The one exception is a *newer-than-current* save: before Phase 19 it was silently deserialized as if
+  it were current, and now it is rejected.
+- Every failure except `Missing`/`Unreadable` preserves the raw text under `"{key}.corrupt"` before
+  returning. That includes `MigrationMissing`, which Phase 13 could previously not tell apart from
+  "no save yet".
+- The envelope `Checksum` field is additive in both directions. A pre-Phase-19 save has no checksum
+  and still loads (it gains one on its next save). An older build ignores the extra field.
+- Storage keys are validated against one fixed, cross-platform rule
+  (`FilePersistenceStorage.ValidateKey`: no `/ \ : * ? " < > |`, no control characters, no `.`/`..`,
+  at most 200 characters), so no key can address a file outside the save folder. The in-memory test
+  storage applies the same rule.
+- Android/iOS: saves live under `Application.persistentDataPath/Saves`, inside the app sandbox, where
+  rename is atomic. The swap protects against the realistic mobile failure, which is the process
+  being killed mid-save. A crash between the two renames of the fallback path leaves only `.old`,
+  and `Exists`/`ReadText` restore it on next access.
+
+### Player-data recovery (`PlayerProfileService`)
+
+- **Load order:** primary → `.bak` → defaults, per section. An attempt counts as failed if
+  persistence reports a failure *or* the section's own `Validate()` throws after migration, so
+  semantically invalid data (e.g. an edited `Coins = -999999` that the game's section rejects) falls
+  back exactly like unparseable data does.
+- The `.bak` key gets the section's migration chain too, so a backup written by an older build can
+  still be restored. A backup that is itself unusable is now detected. Before Phase 19 it was silently
+  "restored" as defaults.
+- Restored data is written back over the unusable primary. `CreateBackup` only copies data that
+  currently loads cleanly, so a corrupted primary can never overwrite the last good backup.
+- Profile metadata and the profile index are backed up and recovered the same way. A loaded index is
+  sanitized (empty, duplicate, and unsafe ids are dropped). `CreateProfile` **re-adopts** a profile
+  whose metadata still exists on disk instead of overwriting it. Before Phase 19, a lost index made
+  `LoadDefaultProfile` wipe the default profile's progress.
+- `IPlayerProfileService.LastLoadRecoveries` reports each recovery as a `SectionRecovery`
+  (`RestoredFromBackup`/`ResetToDefaults`). Whether to tell the player is a game UI decision. The
+  framework never shows raw exception text.
+- A section id of `"Meta"` is rejected, because it would share a storage key with profile metadata.
+- Recovery is scoped to the smallest unit, one section. No automatic profile wipe exists. Deleting a
+  profile still requires an explicit `DeleteProfile` call on a non-active profile.
+
+### Monetization
+
+- `LocalPurchaseValidator` also rejects a result whose `ProductId` differs from the product being
+  granted, and a transaction id longer than 512 characters. Restore and deferred updates for products
+  not in the catalog are logged and ignored, never granted.
+- Provider `Initialize`/`Purchase`/`RestorePurchases` (and ads `Initialize`) exceptions are caught
+  and converted to `Failed` state/results.
+- `EntitlementService.Load` repairs out-of-range expiration ticks (treated as *expired*, never
+  "forever") and undefined `Source` values, instead of throwing out of `Initialize`.
+- **Stored vs verified:** `IEntitlementService.IsVerifiedThisSession(id)` is true only if a
+  provider-backed flow (completed/restored purchase, `SyncFromProvider`) reported the entitlement in
+  this process. It is never persisted, so an edited file cannot make it true. `HasEntitlement`
+  remains the offline cache answer. Neither is a server-grade guarantee: real guarantees still need
+  a backend `IPurchaseValidator`.
+
+### Remote config
+
+Already atomic, with last-known-good behavior, since Phase 17. Phase 19 adds:
+
+- Every value in a candidate snapshot, declared or not, must be `bool`/`int`/`long`/`float`/`double`/
+  `string`. Non-finite numbers are rejected. NaN previously passed range checks, because every
+  comparison with NaN is false.
+- A snapshot may hold at most 4096 keys (`MaxKeyCount`). A key may be at most 256 characters
+  (`MaxKeyLength`) and a string value at most 262,144 characters (`MaxStringValueLength`).
+- A corrupted/tampered cache (checksum), an invalid cache timestamp, and a newer cache schema all
+  mark the cache `Corrupt` and fall back to local defaults. None of them can throw out of `Initialize`.
+- A provider exception in `Initialize`/`Fetch` becomes a `Failed` state or fetch result. Failing to
+  persist a new last-known-good is logged, and the validated activation still stands.
+- Feature flags keep their declared default whenever a key is missing, invalid, or of the wrong type.
+  Startup never depends on a fetch.
+
+### Deep links and notification payloads
+
+- `DeepLinkValidationOptions` (optional constructor argument; the defaults are generous) runs before a
+  URI is stored for dedupe, deferred, or dispatched. It checks: at most 4096 characters, no control
+  characters, an optional case-insensitive **scheme allowlist** (recommended for a shipping game), at
+  most 64 query parameters, and query keys/values of at most 1024 characters each. Rejected URIs are
+  logged only in redacted, truncated form.
+- `NotificationPayloadValidator` checks: `Version` 1..`MaxSupportedVersion` (1), a route of at most
+  256 characters using the path-safe characters `[A-Za-z0-9-_./~]` with no `..`, at most 32
+  parameters, keys of at most 64 characters, values of at most 1024 characters, and free-form fields
+  of at most 256 characters. `NotificationService` replaces an invalid inbound payload with
+  `NotificationPayload.Empty`: the open is still reported, and only its routing intent is dropped.
+  `NotificationDeepLinkBridge` re-validates, so it never splices an unvalidated route into a URI.
+
+### Logging redaction and data minimization
+
+- `SensitiveDataRedactor.Redact` masks `key=value`/`key: value`/`"key":"value"` pairs whose key
+  contains token, secret, password, api key, authorization, credential, receipt, signature, cookie,
+  session id, private key, email, or phone. It also masks `Bearer`/`Basic` credentials. Ordinary text
+  is returned as the same instance, so the cost is one character scan.
+- It is applied at specific boundaries, *not* inside `LoggingService`: deep-link rejection logs,
+  `DiagnosticsService` breadcrumbs, context/tag values, error messages, and report messages. Values
+  are also truncated to 1024 characters, and context and tags are each capped at 64 entries. An
+  `Exception` object forwarded to a crash provider cannot be rewritten; a real crash-SDK adapter
+  should apply the redactor to exception messages itself.
+- Persistence logs never include raw save contents: only the key, the status, and a technical reason.
+  Diagnostic context still contains only framework/app version, platform, device model, and OS
+  (Phase 16). No device id, advertising id, or location is collected.
+
+### Development/production separation
+
+- `BuildEnvironment.IsDevelopmentBuild` is resolved purely from `UNITY_EDITOR || DEVELOPMENT_BUILD`,
+  never from a runtime heuristic.
+- `DevelopmentProviderGuard.Select` is now the only path through which Monetization, Analytics,
+  RemoteConfig, and Notifications bootstrappers pick a mock provider. In a non-development build, a
+  mock toggle left on is refused. The NoOp provider is used instead, and `Debug.LogError` is written
+  (not the `Log` facade, which isn't bound yet during `RegisterServices`). This matters most for
+  `MonetizationBootstrapper`: before Phase 19 it registered the always-succeed mock purchase provider
+  *unconditionally*, which would have granted paid content for free in a release build. It now has
+  a `_useMockProviders` toggle (default on, preserving Editor behavior) and ships
+  `NoOpAdProvider`/`NoOpPurchaseProvider`.
+- `INotificationService.SimulateNotificationOpened`/`Received` are ignored (with an error log) in
+  non-development builds.
+
+### Startup hardening
+
+`GameBootstrapper` now catches each service's `Initialize` exception and handles it as follows:
+
+- It records the failure in `InitializationFailures`, logs it, and gives the half-initialized service
+  one best-effort `Shutdown` for cleanup.
+- It continues initializing the remaining services.
+- The failed service stays registered but uninitialized. `TryGet` returns false for it, so soft
+  dependents degrade. `Get` throws "failed to initialize during bootstrap" instead of the misleading
+  "not yet initialized", so hard dependents also fail visibly and are recorded.
+- Startup still reaches `Ready`. A game that cannot run without a given service checks
+  `InitializationFailures` or `TryGet`.
+
+`Shutdown` also isolates per-service exceptions and never shuts down a service that failed to
+initialize. There is no retry loop and no added delay.
+
+### Secrets
+
+- A Unity client cannot keep a secret. Anything embedded in a build can be extracted. Real secrets
+  (server API keys, signing keys, receipt-validation credentials) belong server-side. Ship only
+  provider-issued *public* client identifiers.
+- No `SecureClientSecret`/secure-storage abstraction was built, because nothing in the framework
+  currently holds a credential. If one is ever needed, it goes behind a small framework interface
+  backed by Android Keystore/iOS Keychain in isolated `Platform/Android`/`Platform/iOS` providers.
+  Ordinary save data is **not** encrypted: validation plus recovery addresses the real risk
+  (accidental loss), and encryption with a key shipped in the client would only be obfuscation.
+- The Phase 19 repository audit (tracked files: key-shaped patterns, credential file types,
+  `ProjectSettings` keystore fields) found no committed secrets.
+
+### Production preflight (Editor)
+
+**GameFramework → Security → Production Preflight** opens a UI Toolkit window that runs
+`FrameworkPreflight.RunAll()`. The scan is read-only and runs only when invoked. It reports:
+
+- the build profile (Development Build on or off)
+- mock-provider toggles serialized as enabled in build scenes and prefabs (YAML text scan, so no scene
+  is opened or dirtied)
+- duplicate product/ad-placement/remote-config ids
+- credential-looking strings under `Assets/`/`ProjectSettings/`, reported by file:line and pattern
+  name only, never the value; `/Tests/` is excluded
+
+It complements, and does not replace, the per-system validators under `Editor/*/`.
+
+### Limits introduced (all documented constants)
+
+| Where | Limit |
+|---|---|
+| `FilePersistenceStorage.MaxKeyLength` | 200 |
+| `PlayerProfileService` profile id | 100 characters |
+| `LocalPurchaseValidator.MaxTransactionIdLength` | 512 |
+| `RemoteConfigService.MaxKeyCount` / `MaxKeyLength` / `MaxStringValueLength` | 4096 / 256 / 262,144 |
+| `DeepLinkValidationOptions` defaults | URI 4096, 64 parameters, 1024 per key/value |
+| `NotificationPayloadValidator` | version ≤ 1, route 256, 32 parameters, key 64, value 1024, fields 256 |
+| `DiagnosticsService.MaxContextEntries` / `MaxValueLength` | 64 / 1024 |
+
+### Testing
+
+128 new EditMode tests, all passing. `PersistenceIntegrityTests`, `FilePersistenceStorageAtomicityTests`,
+`SensitiveDataRedactorTests`, `DevelopmentProviderGuardTests`, and `BootstrapFailureIsolationTests`
+are in `GameFramework.Runtime.Tests`. The rest are `RecoveryHardeningTests` (PlayerData),
+`MonetizationHardeningTests`, `RemoteConfigHardeningTests`, `DeepLinkValidationTests`,
+`PayloadValidationTests` (Notifications), `DiagnosticsRedactionTests` (Analytics), and
+`FrameworkPreflightTests` in the new `GameFramework.Editor.Tests` assembly. The full suite after this
+phase was 1047 EditMode + 171 PlayMode tests, all passing.
+
+### Known limitations
+
+- `.corrupt` holds one copy per key and is replaced on the next failed load. PlayerData deletes a
+  stale marker before each load attempt. Preserved bytes therefore survive for diagnosis within a
+  session, but not indefinitely.
+- An `UnsupportedVersion` save (opened by an older build) falls back to defaults like any other
+  failure, and the next save overwrites the primary. The newer bytes survive only under `.corrupt`.
+  Avoiding that would need a read-only "refuse to save" profile mode, which was not built.
+- Profile saves are still not multi-file transactional (Phase 13). The Phase 2 self-persisting
+  systems (Economy, Settings, and the rest) get checksums and atomic writes, but no `.bak` recovery,
+  since that remains a PlayerData feature.
+- `IsVerifiedThisSession` and every other check here are client-side. A backend `IPurchaseValidator`
+  is the extension point for real payment verification.
+
 ## Roadmap
 
 Phase 3 deliberately did **not** include: Progression, Rewards, Currency, Inventory, Economy,
@@ -5036,3 +5284,10 @@ once one is installed) faster than a nineteenth infrastructure-only phase would;
 saves for the existing Progression/Settings/Tutorial systems become a real requirement, a deliberate,
 explicitly-scoped migration of those six systems onto profile-scoped `IPersistenceService` keys (the
 known limitation Phase 13's own section calls out).
+
+Phase 19 — Security, Data Integrity & Production Hardening. Done — see
+[Security, Data Integrity & Production Hardening](#security-data-integrity--production-hardening).
+Explicitly out of scope (see that section's threat model and "Known limitations"): DRM, anti-cheat,
+custom cryptography, encrypted save data, a secure-storage implementation (no framework data needs
+one yet), a receipt-validation/authentication/any backend server, and a read-only mode for
+newer-version saves. The next planned phase is **Phase 20 — Build, Release & Store Pipeline**.

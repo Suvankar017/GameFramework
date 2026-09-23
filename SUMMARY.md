@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 18 — Notifications, Deep Links & App Lifecycle Framework**, on top of:
+**Phase 19 — Security, Data Integrity & Production Hardening**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -160,6 +160,30 @@ that most games need, without any game-specific content.
   `Framework.md`'s Phase 18 section for exactly what a real adapter would require, and for why
   Android/iOS-specific code was not written this phase (deep links need none - both capture APIs are
   already cross-platform; notifications have no shipped real provider to adapt against).
+- **Phase 19** — production hardening at existing trust boundaries, with
+  no new assembly or registered service:
+  - **Persistence:** atomic temp → flush → verify → `File.Replace` save writes, a SHA-256 envelope
+    checksum (corruption detection, explicitly not tamper-proofing), rejection of newer-than-supported
+    and broken-migration saves, and a structured `IPersistenceService.TryLoad`/`PersistenceLoadStatus`.
+  - **PlayerData:** primary → `.bak` → defaults recovery that also covers post-load `Validate()`
+    failures, backups written by older builds, metadata, and the profile index; re-adoption of on-disk
+    profiles so a lost index can never wipe progress; structured `LastLoadRecoveries`.
+  - **Monetization:** product-id-matched purchase validation, provider-exception isolation, and
+    `IEntitlementService.IsVerifiedThisSession` (local cache ≠ proof of payment).
+  - **Remote config:** rejects NaN/oversized/unsupported values and tampered caches.
+  - **Inbound input:** `DeepLinkValidationOptions` (size limits, optional scheme allowlist) and
+    `NotificationPayloadValidator`.
+  - **Redaction:** `SensitiveDataRedactor` at diagnostic/log boundaries.
+  - **Mock providers:** `BuildEnvironment` + `DevelopmentProviderGuard`, so mocks are refused in
+    release builds. `MonetizationBootstrapper` previously registered an always-succeed mock purchase
+    provider unconditionally.
+  - **Bootstrap:** per-service init/shutdown failure isolation (`InitializationFailures`).
+  - **Editor:** a read-only UI Toolkit **Production Preflight** (mock toggles, committed-secret scan,
+    duplicate ids, build profile).
+
+  See `Framework.md`'s "Security, Data Integrity & Production Hardening" section for the threat model
+  and what client-side hardening cannot do. The next planned phase is **Phase 20 — Build, Release &
+  Store Pipeline**.
 
 No player character, enemy AI, weapons, real ad network/store integration, a real analytics/crash
 SDK, remote config backend, a real notification SDK, or multiplayer exists yet, and no concrete
@@ -990,6 +1014,25 @@ Complete API examples, edge cases, and design rationale for every system are doc
   link to Navigation exactly once). 66/66 Phase 18 tests pass. The full project suite (919 EditMode +
   171 PlayMode tests, measured directly via the Unity Test Runner after this phase) passed with zero
   regressions.
+- Phase 19: 128 new EditMode tests:
+  - `GameFramework.Runtime.Tests`:
+    - `PersistenceIntegrityTests`: checksum, truncation, legacy envelope, future version, migration
+      missing/throwing/null/non-advancing, and the `Unreadable` status.
+    - `FilePersistenceStorageAtomicityTests`: interrupted-replace recovery, leftover temp files, and
+      unsafe keys.
+    - `SensitiveDataRedactorTests`
+    - `DevelopmentProviderGuardTests`: includes the release-build refusal path.
+    - `BootstrapFailureIsolationTests`
+  - `RecoveryHardeningTests` (PlayerData)
+  - `MonetizationHardeningTests`
+  - `RemoteConfigHardeningTests`
+  - `DeepLinkValidationTests`
+  - `PayloadValidationTests` (Notifications)
+  - `DiagnosticsRedactionTests` (Analytics)
+  - `FrameworkPreflightTests`: in the new `GameFramework.Editor.Tests` assembly.
+
+  The full suite after this phase, measured via the Unity Test Runner, was 1047 EditMode + 171
+  PlayMode tests, all passing, with no regressions.
 
 ## Packages / Dependencies
 
@@ -1060,6 +1103,8 @@ Assets/GameFramework/
 │                         Phase 17, and Phase 18 intentionally have no sample yet (Phase 8: see
 │                         Framework.md's Phase 8 section for why; Phase 13/14/15/16/17/18: each
 │                         phase's infrastructure is fully exercised by its own test suite instead)
+│                         (Phase 19 adds Runtime/Security/ - redaction, build environment,
+│                         development-provider guard - and Editor/Security/ - Production Preflight)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```

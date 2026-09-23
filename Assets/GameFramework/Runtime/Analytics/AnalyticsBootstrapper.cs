@@ -3,6 +3,7 @@ using GameFramework.Analytics.Diagnostics.Mock;
 using GameFramework.Analytics.Providers;
 using GameFramework.Analytics.Providers.Mock;
 using GameFramework.Runtime.Bootstrap;
+using GameFramework.Runtime.Security;
 using GameFramework.Runtime.Services;
 using UnityEngine;
 
@@ -48,13 +49,12 @@ namespace GameFramework.Analytics
         {
             base.RegisterServices(registry);
 
-            IAnalyticsProvider analyticsProvider = _useMockAnalyticsProvider
-                ? (IAnalyticsProvider)new MockAnalyticsProvider()
-                : new NoOpAnalyticsProvider();
+            // Phase 19: the mock toggles are honored only in development builds - see DevelopmentProviderGuard.
+            IAnalyticsProvider analyticsProvider = DevelopmentProviderGuard.Select<IAnalyticsProvider>(
+                _useMockAnalyticsProvider, () => new MockAnalyticsProvider(), () => new NoOpAnalyticsProvider(), nameof(AnalyticsBootstrapper));
 
-            ICrashReportingProvider crashProvider = _useMockCrashReportingProvider
-                ? (ICrashReportingProvider)new MockCrashReportingProvider()
-                : new NoOpCrashReportingProvider();
+            ICrashReportingProvider crashProvider = DevelopmentProviderGuard.Select<ICrashReportingProvider>(
+                _useMockCrashReportingProvider, () => new MockCrashReportingProvider(), () => new NoOpCrashReportingProvider(), nameof(AnalyticsBootstrapper));
 
             registry.Register<IDiagnosticsService>(new DiagnosticsService(_diagnosticsConfiguration, crashProvider));
             registry.Register<IAnalyticsService>(new AnalyticsService(_analyticsConfiguration, analyticsProvider));

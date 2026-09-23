@@ -3,6 +3,7 @@ using GameFramework.RemoteConfig.LiveOps;
 using GameFramework.RemoteConfig.Providers;
 using GameFramework.RemoteConfig.Providers.Mock;
 using GameFramework.Runtime.Bootstrap;
+using GameFramework.Runtime.Security;
 using GameFramework.Runtime.Services;
 using UnityEngine;
 
@@ -48,9 +49,12 @@ namespace GameFramework.RemoteConfig
         {
             base.RegisterServices(registry);
 
-            IRemoteConfigProvider provider = _useMockProvider
-                ? (IRemoteConfigProvider)new MockRemoteConfigProvider(_mockSimulationMode, _mockEntries)
-                : new NoOpRemoteConfigProvider();
+            // Phase 19: the mock toggle is honored only in development builds - see DevelopmentProviderGuard.
+            IRemoteConfigProvider provider = DevelopmentProviderGuard.Select<IRemoteConfigProvider>(
+                _useMockProvider,
+                () => new MockRemoteConfigProvider(_mockSimulationMode, _mockEntries),
+                () => new NoOpRemoteConfigProvider(),
+                nameof(RemoteConfigBootstrapper));
 
             registry.Register<IRemoteConfigService>(new RemoteConfigService(_remoteConfigConfiguration, provider));
             registry.Register<IFeatureFlagService>(new FeatureFlagService());

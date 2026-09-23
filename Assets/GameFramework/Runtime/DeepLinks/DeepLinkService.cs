@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using GameFramework.Runtime.Diagnostics;
 using GameFramework.Runtime.Events;
+using GameFramework.Runtime.Security;
 using GameFramework.Runtime.Services;
 using UnityEngine;
 using Log = GameFramework.Runtime.Diagnostics.Log;
@@ -29,6 +30,14 @@ namespace GameFramework.DeepLinks
     /// simultaneous second cold-start link cannot happen). <see cref="SetReady"/> clears
     /// <see cref="PendingRawUri"/> before dispatching it, so it is processed exactly once even if
     /// dispatch itself somehow re-enters <see cref="SetReady"/>.
+    ///
+    /// <b>Input validation (Phase 19):</b> every URI is checked against
+    /// <see cref="DeepLinkValidationOptions"/> (length, control characters, optional scheme allowlist,
+    /// query parameter count/length) <i>before</i> it is recorded for duplicate detection, deferred, or
+    /// dispatched, and a rejected URI is logged only in redacted, truncated form
+    /// (<see cref="SensitiveDataRedactor.RedactUri"/>) since a link may carry a token in its query. A
+    /// deep link can request an action; it can never authorize one - handlers must never grant
+    /// currency/entitlements/purchases/progress directly from link parameters.
     /// </summary>
     public sealed class DeepLinkService : IDeepLinkService
     {
@@ -42,6 +51,7 @@ namespace GameFramework.DeepLinks
         }
 
         private readonly List<HandlerEntry> _handlers = new List<HandlerEntry>();
+        private readonly DeepLinkValidationOptions _validation;
         private int _nextInsertionOrder;
 
         private IEventService _events;
@@ -55,6 +65,17 @@ namespace GameFramework.DeepLinks
         public event Action<string> DeepLinkReceived;
         public event Action<string> DeepLinkHandled;
         public event Action<string, string> DeepLinkRejected;
+
+        public DeepLinkService() : this(null)
+        {
+        }
+
+        /// <param name="validation">Structural limits for inbound URIs; null uses
+        /// <see cref="DeepLinkValidationOptions.Default"/> (generous limits, any scheme).</param>
+        public DeepLinkService(DeepLinkValidationOptions validation)
+        {
+            _validation = validation ?? DeepLinkValidationOptions.Default;
+        }
 
         public void Initialize(IServiceRegistry registry)
         {
@@ -138,6 +159,14 @@ namespace GameFramework.DeepLinks
                 return DeepLinkResult.Failure(DeepLinkResultKind.Rejected, rawUri, "Empty URI.");
             }
 
+            // Structural checks run before anything stores or echoes the string - an oversized or
+            // control-character URI is never kept as _lastProcessedRawUri or a pending link.
+            if (!_validation.ValidateRaw(rawUri, out string rawFailure))
+            {
+                RaiseRejected(rawUri, rawFailure);
+                return DeepLinkResult.Failure(DeepLinkResultKind.Rejected, rawUri, rawFailure);
+            }
+
             if (string.Equals(rawUri, _lastProcessedRawUri, StringComparison.Ordinal))
             {
                 return new DeepLinkResult(DeepLinkResultKind.Duplicate, rawUri);
@@ -152,6 +181,12 @@ namespace GameFramework.DeepLinks
             {
                 RaiseRejected(rawUri, "Malformed URI.");
                 return DeepLinkResult.Failure(DeepLinkResultKind.Rejected, rawUri, "Malformed URI.");
+            }
+
+            if (!_validation.ValidateParsed(link, out string parsedFailure))
+            {
+                RaiseRejected(rawUri, parsedFailure);
+                return DeepLinkResult.Failure(DeepLinkResultKind.Rejected, rawUri, parsedFailure);
             }
 
             if (!IsReady)
@@ -246,7 +281,8 @@ namespace GameFramework.DeepLinks
 
         private void RaiseRejected(string rawUri, string reason)
         {
-            _log?.Log(LogLevel.Warning, LogCategory, $"Deep link rejected ('{rawUri}'): {reason}");
+            // Redacted + truncated: a rejected link is by definition untrusted, and may carry a token.
+            _log?.Log(LogLevel.Warning, LogCategory, $"Deep link rejected ('{SensitiveDataRedactor.RedactUri(rawUri)}'): {reason}");
             _events.Publish(new DeepLinkRejectedEvent(rawUri, reason));
             DeepLinkRejected?.Invoke(rawUri, reason);
         }

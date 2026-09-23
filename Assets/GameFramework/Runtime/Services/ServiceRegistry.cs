@@ -27,6 +27,7 @@ namespace GameFramework.Runtime.Services
         {
             public object Instance;
             public bool IsInitialized;
+            public bool InitializationFailed;
         }
 
         private readonly Dictionary<Type, Entry> _entries = new Dictionary<Type, Entry>();
@@ -52,6 +53,12 @@ namespace GameFramework.Runtime.Services
             if (!_entries.TryGetValue(type, out Entry entry))
             {
                 throw new ServiceNotFoundException(type);
+            }
+
+            if (entry.InitializationFailed)
+            {
+                throw new InvalidOperationException(
+                    $"Service '{type.Name}' failed to initialize during bootstrap and is unavailable; see the earlier [Bootstrap] error.");
             }
 
             if (!entry.IsInitialized)
@@ -86,6 +93,14 @@ namespace GameFramework.Runtime.Services
         internal object GetInstance(Type serviceType) => _entries[serviceType].Instance;
 
         internal void MarkInitialized(Type serviceType) => _entries[serviceType].IsInitialized = true;
+
+        internal bool IsInitialized(Type serviceType) => _entries.TryGetValue(serviceType, out Entry entry) && entry.IsInitialized;
+
+        /// <summary>Records that <paramref name="serviceType"/>'s Initialize threw - it stays
+        /// registered (so <see cref="IsRegistered{TService}"/> still reports it) but
+        /// <see cref="TryGet{TService}"/> keeps returning false and <see cref="Get{TService}"/> throws
+        /// a message naming the real cause instead of "not yet initialized".</summary>
+        internal void MarkInitializationFailed(Type serviceType) => _entries[serviceType].InitializationFailed = true;
 
         internal void Clear()
         {
