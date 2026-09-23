@@ -97,3 +97,10 @@ using System.Runtime.CompilerServices;
 // PersistenceService-over-InMemoryPersistenceStorage) for testing RemoteConfigService/
 // FeatureFlagService/LiveOpsService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.RemoteConfig.Tests")]
+
+// Phase 18 notifications/deep-links test assemblies reuse the same pattern to build a minimal,
+// already-initialized ServiceRegistry (a real EventService, and for Notifications a fake
+// ILocalizationService/INavigationService) for testing NotificationService/DeepLinkService in
+// isolation.
+[assembly: InternalsVisibleTo("GameFramework.Notifications.Tests")]
+[assembly: InternalsVisibleTo("GameFramework.DeepLinks.Tests")]

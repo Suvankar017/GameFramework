@@ -43,5 +43,15 @@ namespace GameFramework.Analytics
         public const string FeatureFlagChanged = "feature_flag_evaluated";
         public const string LiveEventStarted = "live_event_started";
         public const string LiveEventEnded = "live_event_completed";
+
+        public const string NotificationScheduled = "notification_scheduled";
+        public const string NotificationCancelled = "notification_cancelled";
+        public const string NotificationOpened = "notification_opened";
+        public const string NotificationReceived = "notification_received";
+        public const string NotificationPermissionRequested = "notification_permission_requested";
+        public const string NotificationPermissionChanged = "notification_permission_changed";
+        public const string DeepLinkReceived = "deep_link_received";
+        public const string DeepLinkHandled = "deep_link_handled";
+        public const string DeepLinkRejected = "deep_link_rejected";
     }
 }

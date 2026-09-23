@@ -1,0 +1,33 @@
+{
+    "name": "GameFramework.Notifications.Tests",
+    "rootNamespace": "GameFramework.Notifications.Tests",
+    "references": [
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.Performance",
+        "GameFramework.Localization",
+        "GameFramework.Notifications",
+        "GameFramework.DeepLinks",
+        "GameFramework.Notifications.Integration",
+        "GameFramework.UI",
+        "GameFramework.UI.Navigation",
+        "Unity.TextMeshPro",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

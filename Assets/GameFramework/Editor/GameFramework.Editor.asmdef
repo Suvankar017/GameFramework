@@ -20,7 +20,11 @@
         "GameFramework.Platform",
         "GameFramework.Monetization",
         "GameFramework.Analytics",
-        "GameFramework.RemoteConfig"
+        "GameFramework.RemoteConfig",
+        "GameFramework.Performance",
+        "GameFramework.Notifications",
+        "GameFramework.DeepLinks",
+        "GameFramework.Notifications.Integration"
     ],
     "includePlatforms": [
         "Editor"

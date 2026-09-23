@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 17 — Remote Config + Live Operations Framework**, on top of:
+**Phase 18 — Notifications, Deep Links & App Lifecycle Framework**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -133,12 +133,39 @@ that most games need, without any game-specific content.
   Config/Unity Remote Config/PlayFab SDK is installed in this project — only the provider seam
   (`IRemoteConfigProvider`) plus deterministic NoOp/Mock providers exist; see `Framework.md`'s Phase
   17 section for exactly what a real backend adapter would require.
+- **Phase 18** — two provider-independent, Core/Runtime-only layers plus one optional glue assembly:
+  `GameFramework.Notifications` (a hard reference to Performance for the resume-lifecycle event type,
+  and to Localization so a notification's title/body can be declared as a localization key/params
+  pair and resolved once at schedule time, since the OS may display a local notification while the
+  game process isn't even running) provides `INotificationService` — game-supplied, never
+  auto-generated `NotificationId`s (an id is the cancel/replace key), scheduling that replaces an
+  already-scheduled id rather than erroring, a provider-independent
+  `NotificationPermissionStatus`, and cold/warm/hot notification-open reporting, all fully
+  synchronous (the same reasoning `IPersistenceService` already gives for not being `Task`-based).
+  `GameFramework.DeepLinks` (Core/Runtime/Performance only - deliberately *not* referencing UI
+  Navigation, see below) provides `IDeepLinkService` — cold/warm/hot capture via
+  `Application.absoluteURL`/`deepLinkActivated` (genuinely cross-platform Unity APIs, no native
+  plugin needed), URI parsing independent of route matching/dispatch, a priority-ordered
+  `IDeepLinkHandler` chain, a single-slot deferred-link gate a game releases explicitly via
+  `SetReady()`, and a documented "identical to the immediately-previous URI" duplicate-OS-redelivery
+  guard. Neither assembly hard-references `UI.Navigation` - routing is a generic `IDeepLinkHandler`
+  extension point; the optional `GameFramework.Notifications.Integration` assembly supplies a
+  ready-made `NavigationDeepLinkHandler` (route pattern → `INavigationService.Navigate`) and
+  `NotificationDeepLinkBridge` (a tapped notification's payload → a synthetic URI → the same
+  `IDeepLinkService.Process` pipeline a real inbound link goes through), both opt-in and
+  game-constructed. A sixth opt-in `Analytics.Integration` bridge
+  (`NotificationsAnalyticsIntegration`) forwards both phases' published events into Phase 16. No
+  notification SDK (Unity Mobile Notifications/Firebase/OneSignal) is installed in this project —
+  only the provider seam (`INotificationProvider`) plus a deterministic NoOp/Mock provider exist; see
+  `Framework.md`'s Phase 18 section for exactly what a real adapter would require, and for why
+  Android/iOS-specific code was not written this phase (deep links need none - both capture APIs are
+  already cross-platform; notifications have no shipped real provider to adapt against).
 
 No player character, enemy AI, weapons, real ad network/store integration, a real analytics/crash
-SDK, remote config backend, or multiplayer exists yet, and no concrete currency/item/level/unlock/
-reward/quest/achievement/tutorial-content/feedback-content/ad-placement/product/remote-config-key/
-live-event is defined for any specific game — those consume this infrastructure, they don't live in
-it. See
+SDK, remote config backend, a real notification SDK, or multiplayer exists yet, and no concrete
+currency/item/level/unlock/reward/quest/achievement/tutorial-content/feedback-content/ad-placement/
+product/remote-config-key/live-event/notification-content/deep-link-route is defined for any specific
+game — those consume this infrastructure, they don't live in it. See
 `Assets/GameFramework/Documentation/Framework.md`'s Roadmap section for what each phase explicitly
 left out and the seams a later phase would extend.
 
@@ -275,6 +302,23 @@ Rewards. `Analytics.Integration`'s bridge count grows to five with the addition 
 `RemoteConfigAnalyticsIntegration`, which references `GameFramework.RemoteConfig` the same
 opt-in, non-bootstrapper-registered way its other four bridges reference their own source phase.
 
+`GameFramework.Notifications` and `GameFramework.DeepLinks` (Phase 18) are a thirteenth and
+fourteenth sibling. `Notifications` references only Core/Runtime plus Performance (hard, resume-
+lifecycle event type) and Localization (hard, so a notification's content can be declared as a
+localization key and resolved once at schedule time); `DeepLinks` references only Core/Runtime plus
+Performance. Neither references `GameFramework.UI.Navigation`, unlike `NavigationBootstrapper`'s own
+genuine hard dependency on `IUIService` - routing an incoming link to a screen is a generic
+`IDeepLinkHandler` extension point a game (or the optional glue below) fulfills, not something either
+core assembly does itself. Their bootstrappers (`NotificationsBootstrapper`/`DeepLinksBootstrapper`)
+are both bare `GameBootstrapper` subclasses. A fifteenth, optional assembly,
+`GameFramework.Notifications.Integration`, references `Notifications` + `DeepLinks` +
+`UI.Navigation` together to supply `NavigationDeepLinkHandler` (route → `INavigationService.Navigate`)
+and `NotificationDeepLinkBridge` (a tapped notification's payload → the same `IDeepLinkService.Process`
+pipeline a real inbound link goes through) - both opt-in, game-constructed, never registered by any
+bootstrapper. `Analytics.Integration`'s bridge count grows to six with
+`NotificationsAnalyticsIntegration`, referencing `GameFramework.Notifications` + `GameFramework.DeepLinks`
+the same way.
+
 Everything is wired together by `GameBootstrapper`, which registers and initializes services in a
 load-bearing order: Logging → GameState → Scene → Time → Timer → Event → Persistence → Settings,
 then (via `PlayerSystemsBootstrapper`) Input → Localization → Audio → UI → Feedback, (via
@@ -304,7 +348,10 @@ combined subclass) `IDiagnosticsService` → `IAnalyticsService` (the latter res
 during its own `Initialize`, so it is registered first), and (via `RemoteConfigBootstrapper`, or a
 game's own combined subclass) `IRemoteConfigService` → `IFeatureFlagService` → `ILiveOpsService`
 (the latter two resolve `IRemoteConfigService` during their own `Initialize`, so it is registered
-first). `Analytics.Integration`'s five bridges are not registered by any bootstrapper — a game
+first), and (via `NotificationsBootstrapper`/`DeepLinksBootstrapper`, or a game's own combined
+subclass) `INotificationService`/`IDeepLinkService` (independent of each other and of every other
+phase - either can be registered alone). `Analytics.Integration`'s six bridges and
+`Notifications.Integration`'s two glue classes are not registered by any bootstrapper — a game
 constructs the ones it wants after every service it observes is registered and initialized.
 
 ## Assemblies
@@ -335,9 +382,12 @@ constructs the ones it wants after every service it observes is registered and i
 | `GameFramework.Platform` | Platform identity, device information/capabilities, screen/orientation/safe-area, clipboard, URL opening, app-store linking, network reachability, and Camera/Microphone permissions (Phase 14). Composition root: `PlatformBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras`/`PlayerData` — references only Core/Runtime; deliberately does not re-implement Phase 5's application lifecycle or Phase 3's haptics. |
 | `GameFramework.Monetization` | Ads (`IAdsService`: Banner/Interstitial/Rewarded, placement policy/frequency caps, entitlement-based suppression), Purchases (`IPurchaseService`: consumable/non-consumable/subscription products, idempotent transaction processing, restore), Entitlements (`IEntitlementService`) (Phase 15). Composition root: `MonetizationBootstrapper` (extends `ProgressionBootstrapper`). References `GameFramework.Progression`/`.Unlocks`/`.Rewards` (hard) + `GameFramework.Performance` (hard, for lifecycle event types only). Ships only deterministic mock providers — no ad/IAP SDK is installed in this project. |
 | `GameFramework.Analytics` | `IAnalyticsService` (validated/sanitized events, consent-gated buffering, anonymous identity, session lifecycle, screen tracking) + `IDiagnosticsService`/`GameFramework.Analytics.Diagnostics` (breadcrumbs, context/tags, exception/error recording, crash-reporting provider boundary, no-recursive-diagnostics guarantee) (Phase 16). Composition root: `AnalyticsBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras`/`PlayerData`/`Platform` — references only Core/Runtime + `GameFramework.Performance` (hard, lifecycle event types) + `GameFramework.Platform` (hard, diagnostic device context). Ships only deterministic No-Op/Mock providers — no analytics/crash SDK is installed in this project. |
-| `GameFramework.Analytics.Integration` | Five opt-in bridges (`GameFlowAnalyticsIntegration`/`NavigationAnalyticsIntegration`/`TutorialAnalyticsIntegration`/`MonetizationAnalyticsIntegration`/`RemoteConfigAnalyticsIntegration`) forwarding another phase's published events into Analytics (Phases 16-17). Not a composition root — plain `IDisposable` classes a game constructs itself, never registered by `AnalyticsBootstrapper`. References `GameFramework.Analytics` + `GameFramework.GameFlow`/`.UI.Navigation`/`.Tutorials`/`.Monetization`/`.RemoteConfig` — the one assembly in the framework whose entire purpose is cross-system event forwarding, deliberately kept separate from the core `GameFramework.Analytics` assembly so a game that wants none of this instrumentation never pulls those references in. |
+| `GameFramework.Analytics.Integration` | Six opt-in bridges (`GameFlowAnalyticsIntegration`/`NavigationAnalyticsIntegration`/`TutorialAnalyticsIntegration`/`MonetizationAnalyticsIntegration`/`RemoteConfigAnalyticsIntegration`/`NotificationsAnalyticsIntegration`) forwarding another phase's published events into Analytics (Phases 16-18). Not a composition root — plain `IDisposable` classes a game constructs itself, never registered by `AnalyticsBootstrapper`. References `GameFramework.Analytics` + `GameFramework.GameFlow`/`.UI.Navigation`/`.Tutorials`/`.Monetization`/`.RemoteConfig`/`.Notifications`/`.DeepLinks` — the one assembly in the framework whose entire purpose is cross-system event forwarding, deliberately kept separate from the core `GameFramework.Analytics` assembly so a game that wants none of this instrumentation never pulls those references in. |
 | `GameFramework.RemoteConfig` | `IRemoteConfigService` (typed Get*, local defaults, atomic validated snapshot activation, cache with stale/expiration policy), `IFeatureFlagService` (thin typed-bool layer with diffed change notifications), `ILiveOpsService` (UTC start/end event schedules with an optional per-event remote override, pluggable `ILiveOpsClock`) (Phase 17). Composition root: `RemoteConfigBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras`/`PlayerData`/`Platform`/`Analytics` — references only Core/Runtime + `GameFramework.Performance` (hard, application-resume lifecycle event type only). Ships only a deterministic NoOp/Mock provider — no remote config SDK is installed in this project. |
-| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, UI Navigation Catalog validation, Player Data diagnostics, Platform diagnostics, Monetization configuration validation/diagnostics menu items, Analytics diagnostics/event-simulator tooling, and Remote Config/Live Ops content validation/diagnostics menu items. |
+| `GameFramework.Notifications` | `INotificationService` (game-supplied `NotificationId`s that replace-on-duplicate-schedule, provider-independent `NotificationPermissionStatus`, cold/warm/hot notification-open reporting, schedule-time localization resolution) (Phase 18). Composition root: `NotificationsBootstrapper`. Sibling — references only Core/Runtime + `GameFramework.Performance` (hard, resume lifecycle) + `GameFramework.Localization` (hard, schedule-time content resolution). Ships only a deterministic NoOp/Mock provider — no notification SDK is installed in this project. |
+| `GameFramework.DeepLinks` | `IDeepLinkService` (cold/warm/hot URI capture via `Application.absoluteURL`/`deepLinkActivated`, parsing independent of routing, a priority-ordered `IDeepLinkHandler` chain, a single-slot deferred-link gate, documented duplicate-URI protection) (Phase 18). Composition root: `DeepLinksBootstrapper`. Sibling — references only Core/Runtime + `GameFramework.Performance`. Deliberately does not reference `GameFramework.UI.Navigation` - see `GameFramework.Notifications.Integration`. |
+| `GameFramework.Notifications.Integration` | Optional glue: `NavigationDeepLinkHandler` (a ready-made `IDeepLinkHandler` mapping a route pattern to `INavigationService.Navigate`) and `NotificationDeepLinkBridge` (a tapped notification's payload → the same `IDeepLinkService.Process` pipeline a real inbound link goes through) (Phase 18). Not a composition root — never registered by any bootstrapper. References `GameFramework.Notifications` + `.DeepLinks` + `.UI.Navigation`. |
+| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, UI Navigation Catalog validation, Player Data diagnostics, Platform diagnostics, Monetization configuration validation/diagnostics menu items, Analytics diagnostics/event-simulator tooling, Remote Config/Live Ops content validation/diagnostics menu items, and a Notifications/DeepLinks UI Toolkit debug window + diagnostics menu item. |
 | `GameFramework.Cameras.Cinemachine.Editor` | Editor-only; validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend references, duplicate controller ownership, an assigned Confiner with nothing to confine against). Separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. |
 | Matching `*.Tests` / `*.Tests.Runtime` assemblies | EditMode/PlayMode test coverage per system (see Testing below). |
 
@@ -658,6 +708,29 @@ Full per-assembly reference tables and namespace listings live in
   (`RemoteConfigAnalyticsIntegration`) forwards fetch/activation/flag/live-event events into Analytics
   — never registered automatically; see Framework.md's Phase 17 section for the full design and
   provider status.
+- **Notifications & Deep Links** (`INotificationService`/`IDeepLinkService`, Phase 18) — a
+  game-supplied `NotificationId` is the cancel/replace key (never auto-generated, since an
+  uncontrolled id would make cancellation impossible); scheduling an already-scheduled id replaces it
+  rather than erroring. Every `Schedule`/`Cancel` call is synchronous, not `Task`-based — the same
+  reasoning `IPersistenceService` already gives for its own synchronous Save/Load. A notification's
+  title/body can be a raw string or a Phase 3 localization key, resolved once at `Schedule` time (not
+  display time) since the OS may show a local notification while the game process isn't running at
+  all. `IDeepLinkService` captures cold/warm/hot links via `Application.absoluteURL`/
+  `deepLinkActivated` (genuinely cross-platform Unity APIs — no native plugin needed), keeps parsing
+  (`DeepLinkParser`, built on `System.Uri`) strictly separate from routing (a priority-ordered
+  `IDeepLinkHandler` chain a game populates), holds at most one link in a `SetReady()`-gated deferred
+  slot for a cold start before UI/GameFlow is ready, and dedupes an identical-to-the-immediately-
+  previous raw URI (a documented, deterministic strategy — not a time-boxed cache) against repeated OS
+  redelivery. Neither core assembly references `UI.Navigation` — routing to a screen is an opt-in
+  `NavigationDeepLinkHandler`/`NotificationDeepLinkBridge` pair in the separate
+  `GameFramework.Notifications.Integration` assembly, so a game not using UI Navigation still gets
+  full Notifications/DeepLinks functionality. No notification SDK (Unity Mobile Notifications/
+  Firebase/OneSignal) is installed in this project — only `NoOpNotificationProvider` (the
+  `NotificationsBootstrapper` default) and `Providers.Mock.MockNotificationProvider` (opt-in, Editor/
+  testing only) exist behind the `INotificationProvider` seam; deep links need no such seam at all,
+  since Unity's own capture APIs are already cross-platform. A sixth opt-in
+  `Analytics.Integration` bridge (`NotificationsAnalyticsIntegration`) forwards both phases' events
+  into Analytics; see Framework.md's Phase 18 section for the full design and provider status.
 
 Complete API examples, edge cases, and design rationale for every system are documented in
 `Assets/GameFramework/Documentation/Framework.md` — treat that file as the authoritative reference.
@@ -889,6 +962,34 @@ Complete API examples, edge cases, and design rationale for every system are doc
   override disabling an authored event; and the shipped `MockRemoteConfigProvider`'s four simulation
   modes. 30/30 Phase 17 tests pass. The full project suite (853 EditMode + 171 PlayMode tests,
   measured directly via the Unity Test Runner after this phase) passed with zero regressions.
+- Phase 18: `GameFramework.DeepLinks.Tests` (EditMode, 28 tests) covers `DeepLinkParser` (custom-
+  scheme host-into-path normalization, https host/path separation, multiple/encoded query parameters,
+  fragments, malformed/empty input), `DeepLinkRoutePattern` (literal/path-parameter/case-insensitive/
+  segment-count-mismatch matching), and `DeepLinkService` (deferred-until-ready, exactly-once dispatch
+  on `SetReady`, priority ordering, fall-through on `NotApplicable`, `NoHandlerFound`, a handler
+  exception treated as `Failed` without propagating, malformed-URI rejection, identical-consecutive-
+  URI dedup vs. a genuinely different URI processing normally, and `DeepLinkReceived`/`Handled`/
+  `Rejected` events). `GameFramework.Notifications.Tests` (EditMode, 38 tests) reuses the same
+  `TestRegistryFactory` pattern plus `FakeLocalizationService`/`FakeNavigationService`/
+  `FakeDeepLinkHandler` (avoiding a real `LocalizationConfigAsset`/UGUI screen stack, which would
+  otherwise require PlayMode - see `UI.Navigation.Tests`'s own remarks) and the shipped
+  `MockNotificationProvider` (covered separately by `MockNotificationProviderTests`). Covers
+  `NotificationService` schedule validation (past-time and empty-id rejection, a null request
+  throwing), permission gating (`PermissionDenied`/`Unsupported`), duplicate-id replace, cancel/
+  cancel-all, schedule-time localization resolution (including the no-`ILocalizationService`-
+  registered fallback to raw key text), a cold-start launch notification raising
+  `NotificationOpened` during `Initialize`, Editor/QA simulation always marked
+  `WasSimulated = true`, and permission request/changed events; `NavigationDeepLinkHandler` (route
+  matching, path-parameter pass-through, a navigation-guard rejection reported as `Failed`);
+  `NotificationDeepLinkBridge` (payload → URI construction including query-parameter encoding, no-
+  route no-op, `Dispose` unsubscribing); and two explicit end-to-end integration scenarios required by
+  this phase's own brief - `FullChainIntegrationTests` (schedule → simulated tap → payload → deep
+  link → `INavigationService.Navigate` call, with path/query parameters intact) and
+  `LifecyclePendingDeepLinkTests` (a link arriving before `SetReady` never navigates early; the
+  readiness signal - standing in for a game's own GameFlow/UI-ready callback - dispatches the held
+  link to Navigation exactly once). 66/66 Phase 18 tests pass. The full project suite (919 EditMode +
+  171 PlayMode tests, measured directly via the Unity Test Runner after this phase) passed with zero
+  regressions.
 
 ## Packages / Dependencies
 
@@ -910,6 +1011,12 @@ Complete API examples, edge cases, and design rationale for every system are doc
 - No remote config SDK (Firebase Remote Config, Unity Remote Config, PlayFab, ...) is installed —
   Phase 17's `GameFramework.RemoteConfig` ships only the `IRemoteConfigProvider` seam and a
   deterministic NoOp/Mock provider behind it; see `Framework.md`'s Phase 17 section, "Provider status."
+- No notification SDK (`com.unity.mobile.notifications`, Firebase Cloud Messaging, OneSignal, ...) is
+  installed — Phase 18's `GameFramework.Notifications` ships only the `INotificationProvider` seam and
+  a deterministic NoOp/Mock provider behind it; see `Framework.md`'s Phase 18 section, "Provider
+  status." `GameFramework.DeepLinks` needs no such seam - cold/warm/hot link capture is built entirely
+  on `Application.absoluteURL`/`Application.deepLinkActivated`, genuinely cross-platform Unity engine
+  APIs with no package/native-plugin dependency.
 
 ## Folder Layout
 
@@ -930,23 +1037,29 @@ Assets/GameFramework/
 │                        the GameFramework.Analytics assembly (Phase 16), with Core/, Consent/,
 │                        Configuration/, Events/, Providers/(Mock/), Diagnostics/(Mock/), and
 │                        Integration/ (the separate, optional GameFramework.Analytics.Integration
-│                        assembly, whose fifth bridge, RemoteConfigAnalyticsIntegration, is Phase 17's)
-│                        subfolders; RemoteConfig/ holds the GameFramework.RemoteConfig assembly
-│                        (Phase 17), with Providers/(Mock/), FeatureFlags/, and LiveOps/ subfolders
+│                        assembly, whose fifth/sixth bridges, RemoteConfigAnalyticsIntegration/
+│                        NotificationsAnalyticsIntegration, are Phase 17's/Phase 18's) subfolders;
+│                        RemoteConfig/ holds the GameFramework.RemoteConfig assembly (Phase 17), with
+│                        Providers/(Mock/), FeatureFlags/, and LiveOps/ subfolders; Notifications/
+│                        holds the GameFramework.Notifications assembly (Phase 18), with Providers/
+│                        (Mock/) and Integration/ (the separate, optional
+│                        GameFramework.Notifications.Integration assembly) subfolders; DeepLinks/
+│                        holds the GameFramework.DeepLinks assembly (Phase 18)
 ├── Editor/              Editor-only tooling (Localization, Gameplay config, Quest content,
 │                        Tutorial content, Feedback content, Camera Configuration, UI Navigation
 │                        Catalog, Player Data diagnostics, Platform diagnostics, Monetization
 │                        configuration validation/diagnostics, Analytics diagnostics/event-
-│                        simulator tooling, and Remote Config/Live Ops content validation/diagnostics);
+│                        simulator tooling, Remote Config/Live Ops content validation/diagnostics, and
+│                        a Notifications/DeepLinks UI Toolkit debug window + diagnostics menu item);
 │                        Cameras/Cinemachine/ holds the optional .Cinemachine.Editor assembly
 ├── Samples/              Phase0Demo/ … Phase4Demo/ (one per phase), Phase5Benchmark/,
 │                         Phase6Demo/, Phase7Demo/, Phase9Demo/, Phase10Demo/, Phase11Demo/, Phase12Demo/
 │                         (each with authored Content/ ScriptableObject/prefab assets; Phase11Demo/
 │                         additionally has a second scene, Phase11CinemachineDemo.unity, for the
 │                         Cinemachine integration) — Phase 8, Phase 13, Phase 14, Phase 15, Phase 16,
-│                         and Phase 17 intentionally have no sample yet (Phase 8: see Framework.md's
-│                         Phase 8 section for why; Phase 13/14/15/16/17: each phase's infrastructure is
-│                         fully exercised by its own test suite instead)
+│                         Phase 17, and Phase 18 intentionally have no sample yet (Phase 8: see
+│                         Framework.md's Phase 8 section for why; Phase 13/14/15/16/17/18: each
+│                         phase's infrastructure is fully exercised by its own test suite instead)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```

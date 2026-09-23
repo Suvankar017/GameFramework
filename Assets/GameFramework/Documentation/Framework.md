@@ -4618,6 +4618,263 @@ network fetch, real A/B assignment, a real backend's schema versioning) has not 
 a real device or provider — only the abstraction/orchestration layer and its mock provider have been
 tested.
 
+## Notifications, Deep Links & App Lifecycle Framework
+
+Phase 18 adds two provider-independent, Core/Runtime-only layers - `GameFramework.Notifications` and
+`GameFramework.DeepLinks` - plus a small optional glue assembly wiring both to
+`GameFramework.UI.Navigation`, and a sixth opt-in bridge in the existing
+`GameFramework.Analytics.Integration` assembly.
+
+```text
+Game / UI / Gameplay
+        v
+INotificationService (GameFramework.Notifications)   IDeepLinkService (GameFramework.DeepLinks)
+        v                                                       v
+INotificationProvider (provider seam)              DeepLinkParser -> IDeepLinkHandler chain
+        v                                                       ^
+NoOpNotificationProvider (NotificationsBootstrapper's default)  |
+Providers.Mock.MockNotificationProvider (opt-in, Editor/testing) |
+        v                                            NavigationDeepLinkHandler (optional,
+(a future UnityMobileNotifications/Firebase/OneSignal            GameFramework.Notifications.Integration)
+ provider, once a package/SDK is installed)                      v
+                                                       INavigationService (Phase 12)
+```
+
+No notification SDK is installed in this project (`Packages/manifest.json` has none of
+`com.unity.mobile.notifications`, Firebase Cloud Messaging, or OneSignal) - see "Provider status"
+below. Deep links need no such seam at all: cold/warm/hot capture is built entirely on
+`UnityEngine.Application.absoluteURL`/`Application.deepLinkActivated`, genuinely cross-platform Unity
+engine APIs - see "Why no Android/iOS-specific code was written" below.
+
+### Two independent layers, not one
+
+Local notifications and deep links are related (a notification often carries a route) but distinct
+concerns (CLAUDE.md's Phase 18 brief, sections 1/18) - `GameFramework.Notifications` and
+`GameFramework.DeepLinks` are two separate assemblies, neither referencing the other. Their
+connection (`NotificationDeepLinkBridge`) lives in a third, optional assembly - see "Integration"
+below. Phase 14's `Performance.Mobile.IApplicationLifecycleService` remains the one owner of generic
+application lifecycle (section 5) - neither new assembly reads
+`OnApplicationPause`/`OnApplicationFocus`/`OnApplicationQuit` itself; `NotificationService` only
+subscribes to the already-published `ApplicationResumedEvent` to refresh permission status (see
+"Notifications" below).
+
+### Notifications
+
+- **`INotificationService`** (`NotificationService`) - `Schedule`/`Cancel`/`CancelAll`/`GetScheduled`/
+  `IsScheduled`, `RequestPermission`/`CanRequestPermission`/`PermissionStatus`, `RegisterChannel`,
+  `SimulateNotificationOpened`/`SimulateNotificationReceived` (Editor/QA only), `GetDiagnostics`.
+  Deliberately synchronous, not `Task`/`async`-based (section 1's illustrative
+  `await notificationService.ScheduleAsync(...)` was just that - illustrative) - scheduling a local
+  notification is a fast, local operation, the same reasoning
+  `Runtime.Persistence.IPersistenceService` already documents for its own synchronous Save/Load.
+- **`NotificationId`** (section 9) - a stable, game-supplied key, never auto-generated (an
+  uncontrolled random id would make cancellation impossible). Scheduling an id that is already
+  scheduled *replaces* it - the same behavior both Android and iOS already apply natively - rather
+  than requiring a separate "update" call.
+- **Content and localization** (section 27) - `NotificationContent`'s `Title`/`Body`/`Subtitle` are
+  each a `NotificationText`: either raw text or a Phase 3 `ILocalizationService` key + parameters,
+  resolved once by `NotificationService.Schedule` against the currently-active language - **not** at
+  display time, since a local notification can be shown by the OS while the game process isn't even
+  running, and there is no opportunity to call `ILocalizationService` at that moment. A later language
+  change therefore has no effect on an already-scheduled notification's text - the same limitation
+  every real mobile OS imposes on local notifications, made explicit here rather than silently
+  assumed. `ILocalizationService` is resolved softly (`registry.TryGet`); with none registered, a
+  localization-key request falls back to the raw key text and logs a warning rather than throwing.
+- **`NotificationPayload`** (section 8) - `Type`/`Route`/`Parameters`/`ContentId`/`Action`/`Source`/
+  `Version`. The framework only ever transports and reports this; it never interprets `Route` itself
+  (section 26) - see "Integration" below for what does.
+- **Permissions** (`NotificationPermissionStatus`: `Unknown`/`NotDetermined`/`Denied`/`Authorized`/
+  `Provisional`/`Unsupported`, section 13) - entirely provider-reported, unlike
+  `Platform.PermissionStatus` (Camera/Microphone), which Unity's own `Application.HasUserAuthorization`
+  backs directly; there is no equivalent built-in cross-platform notification-permission API.
+  `RequestPermission` is never called automatically by this framework - only in direct response to a
+  game/UI-initiated call (section 13). `NotificationService` also refreshes `PermissionStatus` on
+  every `Performance.Mobile.ApplicationResumedEvent`, since the OS permission can change from device
+  Settings while the app is backgrounded - a soft, event-only integration (Phase 14 remains the
+  lifecycle owner; if `IApplicationLifecycleService` isn't registered, nothing publishes that event
+  and this simply never fires).
+- **Scheduling validation** - `Schedule` rejects an empty `NotificationId`, an unsupported provider/
+  platform, a not-yet-granted permission, and (for a non-repeating request) a `ScheduledTimeUtc`
+  already in the past, all before ever reaching the provider - see `NotificationResultKind` for the
+  full structured-result vocabulary (section 45; never throws for any of these expected conditions).
+  A repeating request (`NotificationRepeatMode.Daily`/`Weekly`) is allowed through even if today's
+  occurrence has already passed - computing "the next occurrence" is provider-specific and out of
+  scope (section 10: no complex recurring-event engine).
+- **`INotificationClock`** (section 33) - one property (`UtcNow`), used by `Schedule`'s past-time
+  check; `SystemNotificationClock` (default) and `ManualNotificationClock` (deterministic tests/Editor
+  simulation) both ship. Deliberately its own small interface rather than reusing
+  `RemoteConfig.LiveOps.ILiveOpsClock` - referencing the entire `GameFramework.RemoteConfig` assembly
+  just for a one-property interface would work against this assembly's own minimal-sibling
+  independence, the same reasoning a fake `ITimeService` is duplicated per test assembly rather than
+  shared.
+- **Cold/warm/hot delivery** (section 21) - `INotificationProvider.TryGetLaunchNotification` is
+  checked once during `NotificationService.Initialize` (cold start: the app may have just been
+  launched by tapping a notification); `NotificationOpened`/`NotificationReceived` (provider C#
+  events, mirrored as `IEventService` publishes) cover every warm/hot case afterward.
+- **Editor/QA simulation** (section 16) - `SimulateNotificationOpened`/`SimulateNotificationReceived`
+  are public `INotificationService` methods (not provider-specific internals), so the Editor debug
+  window/tests can simulate a tap/delivery against *whichever* provider is registered, including
+  `NoOpNotificationProvider`. The resulting `NotificationOpenedInfo.WasSimulated` is always `true` -
+  never claims a real platform delivery (section 16's own explicit requirement).
+
+### Deep Links
+
+- **`IDeepLinkService`** (`DeepLinkService`) - `RegisterHandler`/`UnregisterHandler`, `Process`,
+  `SetReady`, `IsReady`/`PendingRawUri`, `GetDiagnostics`. Captures cold/warm/hot links automatically
+  via the internal `DeepLinkCaptureDriver` (the one centralized place this framework reads
+  `Application.absoluteURL`/`Application.deepLinkActivated` - section 21); also safe to call `Process`
+  directly (Editor debug tool, the notification bridge, tests).
+- **Parsing is independent of routing** (section 19/20) - `DeepLinkParser.TryParse` (built entirely
+  on `System.Uri`, no custom grammar) produces a `DeepLink` (`Scheme`/`Host`/`Path`/
+  `QueryParameters`/`Fragment`/`RawUri`) with no notion of a "route" or handler. A custom-scheme URI
+  (`mygame://daily-reward?source=notification`) and an https URL
+  (`https://example.com/game/daily-reward`) normalize to the same kind of `Path` representation
+  (`/daily-reward` vs. `/game/daily-reward`) - see `DeepLinkParser`'s remarks on why `.NET`'s generic
+  URI parser puts a custom scheme's route into `Host`, not `Path`, and why this type folds the two
+  back together. `DeepLinkRoutePattern` (section 18) then matches on `Path` only, supporting literal
+  segments and `{name}` path parameters (e.g. `"shop/{itemId}"`).
+- **Routing never navigates directly** (sections 20/24) - `IDeepLinkHandler.CanHandle`/`Handle` is the
+  one generic extension point; `DeepLinkService` never instantiates UI or calls
+  `UI.Navigation.INavigationService` itself. Handlers are tried in priority order (ties in
+  registration order); the first to report `Handled` stops the chain, `Failed` stops the chain and
+  reports rejection (does not silently fall through to a lower-priority handler), and
+  `NotApplicable` tries the next one. A handler that throws is caught, logged, and treated as
+  `Failed` - a handler bug must not crash the app.
+- **Cold/warm/hot + deferred processing** (sections 21-22) - `IsReady` starts `false`; a link that
+  arrives before a game calls `SetReady(true)` is held as the single `PendingRawUri` rather than
+  dispatched. Only ever holds the most-recently-deferred link (the practical case is "the app was
+  cold-started via exactly one link"). `SetReady(true)` clears `PendingRawUri` *before* dispatching
+  it, so it is processed exactly once even if dispatch somehow re-enters `SetReady`.
+- **Duplicate protection - the chosen, documented strategy** (section 23) - "identical to the
+  immediately-previous processed raw URI." `DeepLinkService` updates its own last-processed marker the
+  instant a URI passes the empty/null check, before parsing/dispatch, so a byte-identical repeat (the
+  common case: the OS redelivering the same cold-start intent/URL across a config change) is rejected
+  as `DeepLinkResultKind.Duplicate` without re-running any handler. This is a "not equal to the last
+  one" check, not a time-boxed cache - Unity's own capture APIs supply no per-event identifier to
+  dedupe more precisely against.
+- **Validation** (section 36) - an empty/null/malformed URI is rejected (`DeepLinkResultKind.Rejected`)
+  before ever reaching a handler; `DeepLink`/`NotificationPayload` are transport data only - this
+  framework performs no entitlement/authority checks itself (section 36/37: "deep links are requests,
+  not authority" - see "Safety" below).
+
+### Why no Android/iOS-specific code was written
+
+Both notification-relevant Unity APIs this phase actually needed are already genuinely cross-platform
+engine APIs requiring no native plugin: deep-link capture
+(`Application.absoluteURL`/`Application.deepLinkActivated`) works identically on Android/iOS/Editor,
+the same reasoning `Platform.PermissionService` already established for
+`Application.HasUserAuthorization` (CLAUDE.md's Phase 18 brief, sections 5/14/15). Real local/push
+notification delivery has no such built-in API - it requires either `com.unity.mobile.notifications`
+or native platform code, and per CLAUDE.md's Phase 18 brief, section 2 ("do not install a package
+automatically... implement Android/iOS adapters only where justified by installed SDKs/APIs" -
+section 56, step 18), none was installed and therefore no
+`GameFramework.Notifications.Android`/`.iOS` adapter assembly was created. `INotificationProvider` is
+the seam a future adapter fills once a real SDK is installed.
+
+### Provider status
+
+| Provider | Installed | Implemented |
+|---|---|---|
+| Notification SDK (`com.unity.mobile.notifications` / Firebase Cloud Messaging / OneSignal) | No | No - `INotificationProvider` is ready; a future adapter (e.g. `GameFramework.Notifications.UnityMobileNotifications`, referencing only that installed package) would implement it against the real, installed API, never against guessed APIs. |
+| Deep link capture | N/A | Fully implemented against Unity's own `Application.absoluteURL`/`deepLinkActivated` - no provider seam needed or created. |
+
+`NoOpNotificationProvider` is `NotificationsBootstrapper`'s default (a production build must not
+accidentally use a Mock provider - the same precedent every other phase's bootstrapper establishes).
+`Providers.Mock.MockNotificationProvider` is a deterministic, Editor/test-safe provider (in-memory
+scheduling, three simulation modes - `AlwaysSucceed`/`AlwaysPermissionDenied`/`AlwaysUnsupported` -
+plus `SimulateOpened`/`SimulateReceived`/`SimulateColdStartLaunch` test hooks) -
+`NotificationsBootstrapper` exposes an inspector toggle to opt into it for local development/testing.
+Swapping in a real provider once an SDK is installed means changing that one constructor argument
+only - nothing in `NotificationService` changes.
+
+### Integration (optional glue assembly + a sixth Analytics.Integration bridge)
+
+`GameFramework.Notifications.Integration` references `Notifications` + `DeepLinks` + `UI.Navigation`
+together - kept separate from both core assemblies so a game using either one alone never pulls in
+Navigation (CLAUDE.md's Phase 18 brief, section 24's "do not directly instantiate arbitrary UI screens
+from deep-link handlers" is satisfied structurally: the core `DeepLinks` assembly cannot reference
+`UIScreen` at all). It supplies two ready-made, opt-in, game-constructed pieces:
+
+- **`NavigationDeepLinkHandler`** (`IDeepLinkHandler`) - `MapRoute(pattern, screenId)` registers a
+  route → `UIScreenId` mapping; `Handle` calls `INavigationService.Navigate` and delivers
+  `DeepLinkNavigationParameters` (the link itself + any path parameters) through
+  `NavigationRequestOptions.Parameters`, the same explicit-cast convention every other
+  `INavigationService` parameter object already uses (CLAUDE.md's Phase 12 brief, section 19).
+- **`NotificationDeepLinkBridge`** (`IDisposable`) - subscribes to `NotificationOpenedEvent`, and (for
+  a payload with a non-empty `Route`) builds a synthetic URI (`{scheme}://{route}?{parameters}`,
+  scheme configurable, default `"notification"`) and calls `IDeepLinkService.Process` with it - the
+  *same* pipeline a real inbound link goes through, so the same registered handlers
+  (`NavigationDeepLinkHandler` or a game's own) handle both without special-casing "this one came from
+  a notification."
+
+```csharp
+var navigation = GameBootstrapper.Instance.Services.Get<INavigationService>();
+var deepLinks = GameBootstrapper.Instance.Services.Get<IDeepLinkService>();
+var events = GameBootstrapper.Instance.Services.Get<IEventService>();
+
+var navHandler = new NavigationDeepLinkHandler(navigation);
+navHandler.MapRoute("daily-reward", DailyRewardScreenId);
+deepLinks.RegisterHandler(navHandler);
+
+var bridge = new NotificationDeepLinkBridge(events, deepLinks);
+
+// once the game's own startup flow reaches "ready" (Main Menu shown, GameFlow ready, ...):
+deepLinks.SetReady(true);
+
+// on shutdown:
+bridge.Dispose();
+```
+
+`Analytics.Integration`'s sixth bridge, **`NotificationsAnalyticsIntegration`**, forwards
+`NotificationScheduled`/`Cancelled`/`Opened`/`Received`/`PermissionRequested`/`PermissionChanged` and
+`DeepLinkReceived`/`Handled`/`Rejected` into `notification_*`/`deep_link_*` `Track` calls (section 29)
+- deliberately never includes a raw URI or payload parameters in a *rejected*-link analytics call
+(only the rejection reason), since a deep link's query parameters could carry values a game
+considers sensitive.
+
+### Safety
+
+- **Deep links are requests, not authority** (sections 36-37, repeated here deliberately) - this
+  framework validates URI *structure* only; it performs no entitlement, purchase, or authentication
+  check, and it provides no mechanism for a URI parameter (e.g. `premium=true`) to grant anything.
+  Phase 15 (`IPurchaseService`/`IEntitlementService`) remains the sole authority for ownership; a
+  `NavigationDeepLinkHandler`/custom handler that needs to gate a route behind an entitlement checks
+  `IEntitlementService.HasEntitlement` itself before navigating.
+- **Remote Config governs client-side notification *policy*, never authority** (section 38) - a game
+  may read an `IRemoteConfigService` value (e.g. whether local notifications are enabled by default)
+  before calling `INotificationService.Schedule`; this phase adds no dependency from
+  `GameFramework.Notifications` onto `GameFramework.RemoteConfig` to do so automatically.
+
+### Testing
+
+`GameFramework.DeepLinks.Tests` (EditMode, 28 tests) and `GameFramework.Notifications.Tests`
+(EditMode, 38 tests, including `Notifications.Integration`'s two glue classes and two end-to-end
+integration scenarios - `Notification → Payload → DeepLink → Navigation` and
+`Lifecycle → Pending DeepLink → Navigation`, both explicitly required by CLAUDE.md's Phase 18 brief,
+section 46) use fakes throughout (`FakeLocalizationService`/`FakeNavigationService`/
+`FakeDeepLinkHandler`) rather than a real UGUI screen stack, which would require PlayMode - see
+`UI.Navigation.Tests`'s own remarks on why its tests are PlayMode-only. 66/66 Phase 18 tests pass; the
+full project suite (919 EditMode + 171 PlayMode tests, measured directly via the Unity Test Runner)
+passed with zero regressions after this phase.
+
+### Known limitations / non-goals
+
+A push-notification backend/server, a marketing-automation/campaign engine, a notification-analytics
+dashboard, URL shortening, a real Android/iOS notification adapter (no SDK is installed - see
+"Provider status" above), and any game-specific notification content/deep-link route are all
+explicitly out of scope for this phase (CLAUDE.md's Phase 18 brief, section 50). `INotificationProvider`
+is the seam a future adapter would extend. No editor tool was built beyond a menu-item diagnostics log
+(`Editor.Notifications.NotificationsDiagnosticsMenu`) and a small UI Toolkit debug window
+(`NotificationsDebugWindow`, Play-Mode-only, every simulated action clearly marked as simulated) - the
+same "not a game-facing dashboard" precedent every prior phase's Editor tooling already established.
+Recurring notifications (`NotificationRepeatMode.Daily`/`Weekly`) are metadata only in this phase's
+shipped providers - neither `NoOpNotificationProvider` nor `MockNotificationProvider` actually
+re-fires a repeating notification; a real provider adapter (or the OS itself, for a real SDK) owns
+that behavior. Real provider SDK behavior (an actual scheduled notification appearing in the device's
+notification tray, real OS permission-prompt UI, a real cold-start app-icon-tap launch) has not been
+verified against a real device or provider - only the abstraction/orchestration layer and its mock
+provider have been tested.
+
 ## Roadmap
 
 Phase 3 deliberately did **not** include: Progression, Rewards, Currency, Inventory, Economy,
@@ -4756,15 +5013,26 @@ notifications, and a real Firebase Remote Config/Unity Remote Config/PlayFab ada
 installed in this project) — `IRemoteConfigProvider` is the seam a game or a later phase would
 extend, not something this phase builds itself.
 
-Candidate next phases, based on the actual architecture after Phase 17 (none committed to yet):
-**Phase 18 — Notifications + Deep Links + App Lifecycle Framework**, the phase this project's own
-Phase 17 brief names as the intended next step; or a first concrete game built on top of everything
-through Phase 17, which would likely surface real integration gaps (e.g. an actual GameFlow<->
-Navigation<->PlayerData bootstrap bridge beyond plain event mappings, a concrete need for
-`NavigationGuardResult.Defer` retry semantics, a genuine need for gamepad/keyboard UI focus
-navigation, a UI-side safe-area component consuming Phase 14's `IScreenService`, or a real ad/IAP/
-analytics/crash/remote-config SDK adapter once one is installed) faster than an eighteenth
-infrastructure-only phase would; or, if multi-profile saves for the existing Progression/Settings/
-Tutorial systems become a real requirement, a deliberate, explicitly-scoped migration of those six
-systems onto profile-scoped `IPersistenceService` keys (the known limitation Phase 13's own section
-calls out).
+Phase 18 — Notifications, Deep Links & App Lifecycle Framework. Done — see
+[Notifications, Deep Links & App Lifecycle Framework](#notifications-deep-links--app-lifecycle-framework).
+Explicitly out of scope and left for later (see that section's own "Known limitations / non-goals"):
+a push-notification backend/server, a marketing-automation/campaign engine, a notification-analytics
+dashboard, URL shortening, and a real Android/iOS notification adapter (no
+`com.unity.mobile.notifications`/Firebase Cloud Messaging/OneSignal SDK is installed in this project)
+— `INotificationProvider` is the seam a game or a later phase would extend, not something this phase
+builds itself. Deep-link capture needed no such seam at all, since Unity's own
+`Application.absoluteURL`/`deepLinkActivated` are already cross-platform.
+
+Candidate next phases, based on the actual architecture after Phase 18 (none committed to yet):
+**Phase 19 — Security, Data Integrity & Production Hardening**, the phase this project's own Phase 18
+brief names as the intended next step (save/data integrity, corruption recovery, secure storage
+boundaries, validation, entitlement/data consistency, logging redaction, production safety, build/
+runtime hardening); or a first concrete game built on top of everything through Phase 18, which would
+likely surface real integration gaps (e.g. an actual GameFlow<->Navigation<->PlayerData bootstrap
+bridge beyond plain event mappings, a concrete need for `NavigationGuardResult.Defer` retry semantics,
+a genuine need for gamepad/keyboard UI focus navigation, a UI-side safe-area component consuming
+Phase 14's `IScreenService`, or a real ad/IAP/analytics/crash/remote-config/notification SDK adapter
+once one is installed) faster than a nineteenth infrastructure-only phase would; or, if multi-profile
+saves for the existing Progression/Settings/Tutorial systems become a real requirement, a deliberate,
+explicitly-scoped migration of those six systems onto profile-scoped `IPersistenceService` keys (the
+known limitation Phase 13's own section calls out).

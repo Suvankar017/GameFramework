@@ -8,6 +8,7 @@
   <Project Path="GameFramework.Rewards.csproj" />
   <Project Path="GameFramework.Progression.csproj" />
   <Project Path="GameFramework.RemoteConfig.Tests.csproj" />
+  <Project Path="GameFramework.Notifications.Tests.csproj" />
   <Project Path="GameFramework.Unlocks.Tests.csproj" />
   <Project Path="GameFramework.Performance.csproj" />
   <Project Path="GameFramework.UI.Navigation.csproj" />
@@ -22,6 +23,7 @@
   <Project Path="GameFramework.Tutorials.csproj" />
   <Project Path="GameFramework.Input.csproj" />
   <Project Path="GameFramework.PlayerData.Tests.csproj" />
+  <Project Path="GameFramework.Notifications.csproj" />
   <Project Path="GameFramework.Presentation.csproj" />
   <Project Path="GameFramework.Cameras.csproj" />
   <Project Path="GameFramework.GameFlow.csproj" />
@@ -30,6 +32,7 @@
   <Project Path="GameFramework.Analytics.csproj" />
   <Project Path="GameFramework.Localization.csproj" />
   <Project Path="GameFramework.Samples.Phase12Demo.csproj" />
+  <Project Path="GameFramework.DeepLinks.csproj" />
   <Project Path="GameFramework.Audio.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.csproj" />
   <Project Path="GameFramework.Analytics.Integration.csproj" />
@@ -41,6 +44,7 @@
   <Project Path="GameFramework.Samples.Phase2Demo.csproj" />
   <Project Path="GameFramework.UI.Navigation.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Core.csproj" />
+  <Project Path="GameFramework.DeepLinks.Tests.csproj" />
   <Project Path="GameFramework.Feedback.Tests.csproj" />
   <Project Path="GameFramework.Platform.Tests.Runtime.csproj" />
   <Project Path="GameFramework.UI.Tests.Runtime.csproj" />
@@ -67,6 +71,7 @@
   <Project Path="GameFramework.Samples.Phase7Demo.csproj" />
   <Project Path="GameFramework.Presentation.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Cameras.Tests.Runtime.csproj" />
+  <Project Path="GameFramework.Notifications.Integration.csproj" />
   <Project Path="GameFramework.Cameras.Cinemachine.Tests.csproj" />
   <Project Path="GameFramework.Audio.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase0Demo.csproj" />

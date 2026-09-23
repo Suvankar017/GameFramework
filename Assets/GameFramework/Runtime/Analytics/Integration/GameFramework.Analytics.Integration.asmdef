@@ -10,7 +10,9 @@
         "GameFramework.UI.Navigation",
         "GameFramework.Tutorials",
         "GameFramework.Monetization",
-        "GameFramework.RemoteConfig"
+        "GameFramework.RemoteConfig",
+        "GameFramework.Notifications",
+        "GameFramework.DeepLinks"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
