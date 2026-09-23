@@ -30,8 +30,8 @@
   <Project Path="GameFramework.Samples.Phase12Demo.csproj" />
   <Project Path="GameFramework.Audio.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.csproj" />
-  <Project Path="GameFramework.Cameras.Tests.csproj" />
   <Project Path="GameFramework.Analytics.Tests.csproj" />
+  <Project Path="GameFramework.Cameras.Tests.csproj" />
   <Project Path="GameFramework.Audio.Tests.csproj" />
   <Project Path="GameFramework.Monetization.csproj" />
   <Project Path="GameFramework.Performance.Tests.csproj" />
