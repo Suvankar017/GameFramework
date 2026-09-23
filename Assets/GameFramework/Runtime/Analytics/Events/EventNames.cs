@@ -34,5 +34,14 @@ namespace GameFramework.Analytics
         public const string PurchaseFailed = "purchase_failed";
         public const string RestoreCompleted = "restore_completed";
         public const string EntitlementChanged = "entitlement_changed";
+
+        public const string ConfigFetchStarted = "configuration_fetch_started";
+        public const string ConfigFetchSucceeded = "configuration_fetch_succeeded";
+        public const string ConfigFetchFailed = "configuration_fetch_failed";
+        public const string ConfigActivated = "configuration_activated";
+        public const string ConfigRejected = "configuration_rejected";
+        public const string FeatureFlagChanged = "feature_flag_evaluated";
+        public const string LiveEventStarted = "live_event_started";
+        public const string LiveEventEnded = "live_event_completed";
     }
 }

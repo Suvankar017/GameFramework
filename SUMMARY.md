@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 16 — Analytics + Crash / Diagnostics Framework**, on top of:
+**Phase 17 — Remote Config + Live Operations Framework**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -117,11 +117,28 @@ that most games need, without any game-specific content.
   (`IAnalyticsProvider`/`ICrashReportingProvider`) plus deterministic No-Op/Mock providers exist; see
   `Framework.md`'s Phase 16 section for exactly what a real Firebase/Sentry/Crashlytics-style adapter
   would require.
+- **Phase 17** — a provider-independent Remote Config + Live Operations layer, Core/Runtime + a hard
+  reference to Performance (application-resume lifecycle events) only: `IRemoteConfigService` (typed
+  Get*, local defaults, atomic validated snapshot activation — an invalid/out-of-range/newer-schema
+  payload never partially applies, cache persisted separately from player-save data, stale/expired
+  cache policy, a fetch generation counter that safely ignores a late provider callback after its own
+  fetch-timeout already fired), `IFeatureFlagService` (a thin typed-bool layer over
+  `IRemoteConfigService` with change notifications diffed per declared flag), and `ILiveOpsService`
+  (a flat UTC start/end event schedule with an optional per-event remote override, a pluggable
+  `ILiveOpsClock` for server-time-aware/testable scheduling, and a low-frequency `ITimerService` poll —
+  never a per-frame `Update` — to detect a pure time-based state transition between configuration
+  activations). A fifth opt-in `Analytics.Integration` bridge
+  (`RemoteConfigAnalyticsIntegration`) forwards Phase 17's own published events into Phase 16, the
+  same non-bootstrapper-registered pattern the existing four bridges use. No Firebase Remote
+  Config/Unity Remote Config/PlayFab SDK is installed in this project — only the provider seam
+  (`IRemoteConfigProvider`) plus deterministic NoOp/Mock providers exist; see `Framework.md`'s Phase
+  17 section for exactly what a real backend adapter would require.
 
 No player character, enemy AI, weapons, real ad network/store integration, a real analytics/crash
-SDK, remote config, or multiplayer exists yet, and no concrete currency/item/level/unlock/reward/
-quest/achievement/tutorial-content/feedback-content/ad-placement/product is defined for any specific
-game — those consume this infrastructure, they don't live in it. See
+SDK, remote config backend, or multiplayer exists yet, and no concrete currency/item/level/unlock/
+reward/quest/achievement/tutorial-content/feedback-content/ad-placement/product/remote-config-key/
+live-event is defined for any specific game — those consume this infrastructure, they don't live in
+it. See
 `Assets/GameFramework/Documentation/Framework.md`'s Roadmap section for what each phase explicitly
 left out and the seams a later phase would extend.
 
@@ -243,10 +260,20 @@ Performance (hard, for application-lifecycle event types only, the same reasonin
 for diagnostic device/platform context only). `GameFramework.Analytics.Integration` is a *separate,
 optional* eleventh assembly layered on top — the only one in the framework whose entire purpose is
 cross-system event forwarding, so it references `GameFramework.Analytics` plus GameFlow/UI.Navigation/
-Tutorials/Monetization all at once; a game that doesn't need any of that instrumentation never
-references it, and Analytics itself is fully functional without it. Its `AnalyticsBootstrapper` is a
-`GameBootstrapper` subclass, not a `PlayerSystemsBootstrapper`/`ProgressionBootstrapper` subclass —
-nothing it registers has a hard dependency on Input/UI/Rewards.
+Tutorials/Monetization/RemoteConfig all at once; a game that doesn't need any of that instrumentation
+never references it, and Analytics itself is fully functional without it. Its `AnalyticsBootstrapper`
+is a `GameBootstrapper` subclass, not a `PlayerSystemsBootstrapper`/`ProgressionBootstrapper`
+subclass — nothing it registers has a hard dependency on Input/UI/Rewards.
+
+`GameFramework.RemoteConfig` (Phase 17) is a twelfth sibling — it references only Core/Runtime plus
+Performance (hard, for the application-resume lifecycle event type only, the same reasoning
+`GameFramework.Monetization`/`GameFramework.Analytics` already established for an identical
+reference). Its `RemoteConfigBootstrapper` is a `GameBootstrapper` subclass, not a
+`PlayerSystemsBootstrapper`/`ProgressionBootstrapper` subclass — none of its three services
+(`IRemoteConfigService`/`IFeatureFlagService`/`ILiveOpsService`) has a hard dependency on Input/UI/
+Rewards. `Analytics.Integration`'s bridge count grows to five with the addition of
+`RemoteConfigAnalyticsIntegration`, which references `GameFramework.RemoteConfig` the same
+opt-in, non-bootstrapper-registered way its other four bridges reference their own source phase.
 
 Everything is wired together by `GameBootstrapper`, which registers and initializes services in a
 load-bearing order: Logging → GameState → Scene → Time → Timer → Event → Persistence → Settings,
@@ -274,9 +301,11 @@ directly since it has a real compile-time dependency on Rewards) `IEntitlementSe
 `IAdsService` → `IPurchaseService` (the latter two resolve `IEntitlementService` softly during their
 own `Initialize`, so it is registered first), and (via `AnalyticsBootstrapper`, or a game's own
 combined subclass) `IDiagnosticsService` → `IAnalyticsService` (the latter resolves the former softly
-during its own `Initialize`, so it is registered first). `Analytics.Integration`'s four bridges are
-not registered by any bootstrapper — a game constructs the ones it wants after every service it
-observes is registered and initialized.
+during its own `Initialize`, so it is registered first), and (via `RemoteConfigBootstrapper`, or a
+game's own combined subclass) `IRemoteConfigService` → `IFeatureFlagService` → `ILiveOpsService`
+(the latter two resolve `IRemoteConfigService` during their own `Initialize`, so it is registered
+first). `Analytics.Integration`'s five bridges are not registered by any bootstrapper — a game
+constructs the ones it wants after every service it observes is registered and initialized.
 
 ## Assemblies
 
@@ -306,8 +335,9 @@ observes is registered and initialized.
 | `GameFramework.Platform` | Platform identity, device information/capabilities, screen/orientation/safe-area, clipboard, URL opening, app-store linking, network reachability, and Camera/Microphone permissions (Phase 14). Composition root: `PlatformBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras`/`PlayerData` — references only Core/Runtime; deliberately does not re-implement Phase 5's application lifecycle or Phase 3's haptics. |
 | `GameFramework.Monetization` | Ads (`IAdsService`: Banner/Interstitial/Rewarded, placement policy/frequency caps, entitlement-based suppression), Purchases (`IPurchaseService`: consumable/non-consumable/subscription products, idempotent transaction processing, restore), Entitlements (`IEntitlementService`) (Phase 15). Composition root: `MonetizationBootstrapper` (extends `ProgressionBootstrapper`). References `GameFramework.Progression`/`.Unlocks`/`.Rewards` (hard) + `GameFramework.Performance` (hard, for lifecycle event types only). Ships only deterministic mock providers — no ad/IAP SDK is installed in this project. |
 | `GameFramework.Analytics` | `IAnalyticsService` (validated/sanitized events, consent-gated buffering, anonymous identity, session lifecycle, screen tracking) + `IDiagnosticsService`/`GameFramework.Analytics.Diagnostics` (breadcrumbs, context/tags, exception/error recording, crash-reporting provider boundary, no-recursive-diagnostics guarantee) (Phase 16). Composition root: `AnalyticsBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras`/`PlayerData`/`Platform` — references only Core/Runtime + `GameFramework.Performance` (hard, lifecycle event types) + `GameFramework.Platform` (hard, diagnostic device context). Ships only deterministic No-Op/Mock providers — no analytics/crash SDK is installed in this project. |
-| `GameFramework.Analytics.Integration` | Four opt-in bridges (`GameFlowAnalyticsIntegration`/`NavigationAnalyticsIntegration`/`TutorialAnalyticsIntegration`/`MonetizationAnalyticsIntegration`) forwarding another phase's published events into Analytics (Phase 16). Not a composition root — plain `IDisposable` classes a game constructs itself, never registered by `AnalyticsBootstrapper`. References `GameFramework.Analytics` + `GameFramework.GameFlow`/`.UI.Navigation`/`.Tutorials`/`.Monetization` — the one assembly in the framework whose entire purpose is cross-system event forwarding, deliberately kept separate from the core `GameFramework.Analytics` assembly so a game that wants none of this instrumentation never pulls those four references in. |
-| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, UI Navigation Catalog validation, Player Data diagnostics, Platform diagnostics, Monetization configuration validation/diagnostics menu items, and Analytics diagnostics/event-simulator tooling. |
+| `GameFramework.Analytics.Integration` | Five opt-in bridges (`GameFlowAnalyticsIntegration`/`NavigationAnalyticsIntegration`/`TutorialAnalyticsIntegration`/`MonetizationAnalyticsIntegration`/`RemoteConfigAnalyticsIntegration`) forwarding another phase's published events into Analytics (Phases 16-17). Not a composition root — plain `IDisposable` classes a game constructs itself, never registered by `AnalyticsBootstrapper`. References `GameFramework.Analytics` + `GameFramework.GameFlow`/`.UI.Navigation`/`.Tutorials`/`.Monetization`/`.RemoteConfig` — the one assembly in the framework whose entire purpose is cross-system event forwarding, deliberately kept separate from the core `GameFramework.Analytics` assembly so a game that wants none of this instrumentation never pulls those references in. |
+| `GameFramework.RemoteConfig` | `IRemoteConfigService` (typed Get*, local defaults, atomic validated snapshot activation, cache with stale/expiration policy), `IFeatureFlagService` (thin typed-bool layer with diffed change notifications), `ILiveOpsService` (UTC start/end event schedules with an optional per-event remote override, pluggable `ILiveOpsClock`) (Phase 17). Composition root: `RemoteConfigBootstrapper`. Sibling of `PlayerSystems`/`Gameplay`/`Performance`/`Progression`/`GameFlow`/`Tutorials`/`Cameras`/`PlayerData`/`Platform`/`Analytics` — references only Core/Runtime + `GameFramework.Performance` (hard, application-resume lifecycle event type only). Ships only a deterministic NoOp/Mock provider — no remote config SDK is installed in this project. |
+| `GameFramework.Editor` | Editor-only; localization table validation, Gameplay config validation, Quest content validation, Tutorial content validation, Feedback content validation, Camera Configuration validation, UI Navigation Catalog validation, Player Data diagnostics, Platform diagnostics, Monetization configuration validation/diagnostics menu items, Analytics diagnostics/event-simulator tooling, and Remote Config/Live Ops content validation/diagnostics menu items. |
 | `GameFramework.Cameras.Cinemachine.Editor` | Editor-only; validates a scene's Cinemachine-backed cameras (missing Brain/Controller/Virtual Camera/Backend references, duplicate controller ownership, an assigned Confiner with nothing to confine against). Separate from `GameFramework.Editor` specifically so that assembly stays Cinemachine-free. |
 | Matching `*.Tests` / `*.Tests.Runtime` assemblies | EditMode/PlayMode test coverage per system (see Testing below). |
 
@@ -606,6 +636,28 @@ Full per-assembly reference tables and namespace listings live in
   Navigation/Tutorial/Monetization events into Analytics — never registered automatically, since
   Analytics observes the game and never controls it; see Framework.md's Phase 16 section for the
   full design and provider status.
+- **Remote Config + Live Operations** (`IRemoteConfigService`/`IFeatureFlagService`/`ILiveOpsService`,
+  Phase 17) — configuration, not authority: every declared `RemoteConfigDefinition` has a safe local
+  default, and every candidate snapshot (a cached payload or a fresh fetch, always rebuilt from a
+  fresh copy of the defaults rather than layered onto whatever was previously active) is fully
+  validated — type match, numeric range, schema version — before it is ever activated; a single
+  invalid key rejects the whole snapshot rather than partially applying it. A fetch generation counter
+  makes a slow provider's callback arriving after the service's own fetch-timeout already resolved
+  that attempt a safe no-op. `IFeatureFlagService` is a thin typed-bool wrapper that additionally
+  diffs each declared flag across an activation to raise a change notification only when its resolved
+  value actually changes. `ILiveOpsService` evaluates a flat, UTC-only event schedule
+  (Upcoming/Active/Ended/Disabled/Invalid) against a pluggable `ILiveOpsClock` (local time adjusted by
+  a provider-supplied server-time offset when available, explicitly local-time-only otherwise), with
+  three reserved per-event remote config keys (`liveops.{id}.enabled`/`start_utc`/`end_utc`) letting a
+  backend move or disable an authored event without a new build; a low-frequency `ITimerService` poll
+  (never a per-frame `Update`) detects a pure time-based transition between configuration activations.
+  No Firebase Remote Config/Unity Remote Config/PlayFab SDK is installed in this project — only
+  `NoOpRemoteConfigProvider` (the `RemoteConfigBootstrapper` default) and
+  `Providers.Mock.MockRemoteConfigProvider` (opt-in, Editor/testing only) exist behind the
+  `IRemoteConfigProvider` seam. A fifth opt-in bridge in `GameFramework.Analytics.Integration`
+  (`RemoteConfigAnalyticsIntegration`) forwards fetch/activation/flag/live-event events into Analytics
+  — never registered automatically; see Framework.md's Phase 17 section for the full design and
+  provider status.
 
 Complete API examples, edge cases, and design rationale for every system are documented in
 `Assets/GameFramework/Documentation/Framework.md` — treat that file as the authoritative reference.
@@ -819,8 +871,24 @@ Complete API examples, edge cases, and design rationale for every system are doc
   verified directly — a provider failure during `Report` never triggers a second report (no recursive
   diagnostics); and `Analytics.Integration`'s four bridges forwarding a hand-published GameFlow/UI
   Navigation/Tutorial/Monetization event into a normalized `Track` call, plus `Dispose` correctly
-  unsubscribing. 36/36 Phase 16 tests pass; the full project suite (787 EditMode + 171 PlayMode tests
-  as of Phase 15) was re-run after this phase with zero regressions.
+  unsubscribing. 36/36 Phase 16 tests pass.
+- Phase 17: `GameFramework.RemoteConfig.Tests` (EditMode) reuses the same `TestRegistryFactory`/
+  reflection-based `TestDefinitions` pattern, plus a fully-controllable `FakeRemoteConfigProvider`
+  (distinct from the shipped `MockRemoteConfigProvider`, covered in its own right by
+  `MockProviderTests`) so multi-step scenarios (a suppressed callback simulating a hung fetch, an
+  exact invalid/out-of-range/schema-mismatched payload) are deterministic. Covers declared-default
+  resolution, successful fetch/activation with published events, atomicity (an invalid key rejects a
+  payload's otherwise-valid keys too), range/schema-version rejection, provider-unavailable fallback,
+  `AlreadyInProgress` re-entrancy, a late provider callback after the service's own fetch-timeout
+  already resolved being ignored, a key a later fetch omits reverting to its default rather than
+  lingering; cache fresh/stale/expired/corrupt(unsupported schema)/missing/cross-environment behavior
+  via two independent `RemoteConfigService` instances sharing one `InMemoryPersistenceStorage`
+  (simulating an application restart); `FeatureFlagService` default resolution and change-notification
+  diffing (only on an actual value change); `LiveOpsService` Upcoming/Active/Ended state resolution
+  and start/end transition events driven through a `ManualLiveOpsClock`, plus a per-event remote
+  override disabling an authored event; and the shipped `MockRemoteConfigProvider`'s four simulation
+  modes. 30/30 Phase 17 tests pass. The full project suite (853 EditMode + 171 PlayMode tests,
+  measured directly via the Unity Test Runner after this phase) passed with zero regressions.
 
 ## Packages / Dependencies
 
@@ -839,6 +907,9 @@ Complete API examples, edge cases, and design rationale for every system are doc
   (Crashlytics, Sentry, ...) is installed — Phase 16's `GameFramework.Analytics` ships only the
   `IAnalyticsProvider`/`ICrashReportingProvider` seams and deterministic No-Op/Mock providers behind
   them; see `Framework.md`'s Phase 16 section, "Provider status."
+- No remote config SDK (Firebase Remote Config, Unity Remote Config, PlayFab, ...) is installed —
+  Phase 17's `GameFramework.RemoteConfig` ships only the `IRemoteConfigProvider` seam and a
+  deterministic NoOp/Mock provider behind it; see `Framework.md`'s Phase 17 section, "Provider status."
 
 ## Folder Layout
 
@@ -859,21 +930,23 @@ Assets/GameFramework/
 │                        the GameFramework.Analytics assembly (Phase 16), with Core/, Consent/,
 │                        Configuration/, Events/, Providers/(Mock/), Diagnostics/(Mock/), and
 │                        Integration/ (the separate, optional GameFramework.Analytics.Integration
-│                        assembly) subfolders
+│                        assembly, whose fifth bridge, RemoteConfigAnalyticsIntegration, is Phase 17's)
+│                        subfolders; RemoteConfig/ holds the GameFramework.RemoteConfig assembly
+│                        (Phase 17), with Providers/(Mock/), FeatureFlags/, and LiveOps/ subfolders
 ├── Editor/              Editor-only tooling (Localization, Gameplay config, Quest content,
 │                        Tutorial content, Feedback content, Camera Configuration, UI Navigation
 │                        Catalog, Player Data diagnostics, Platform diagnostics, Monetization
-│                        configuration validation/diagnostics, and Analytics diagnostics/event-
-│                        simulator tooling); Cameras/Cinemachine/ holds the optional
-│                        .Cinemachine.Editor assembly
+│                        configuration validation/diagnostics, Analytics diagnostics/event-
+│                        simulator tooling, and Remote Config/Live Ops content validation/diagnostics);
+│                        Cameras/Cinemachine/ holds the optional .Cinemachine.Editor assembly
 ├── Samples/              Phase0Demo/ … Phase4Demo/ (one per phase), Phase5Benchmark/,
 │                         Phase6Demo/, Phase7Demo/, Phase9Demo/, Phase10Demo/, Phase11Demo/, Phase12Demo/
 │                         (each with authored Content/ ScriptableObject/prefab assets; Phase11Demo/
 │                         additionally has a second scene, Phase11CinemachineDemo.unity, for the
-│                         Cinemachine integration) — Phase 8, Phase 13, Phase 14, Phase 15, and Phase
-│                         16 intentionally have no sample yet (Phase 8: see Framework.md's Phase 8
-│                         section for why; Phase 13/14/15/16: each phase's infrastructure is fully
-│                         exercised by its own test suite instead)
+│                         Cinemachine integration) — Phase 8, Phase 13, Phase 14, Phase 15, Phase 16,
+│                         and Phase 17 intentionally have no sample yet (Phase 8: see Framework.md's
+│                         Phase 8 section for why; Phase 13/14/15/16/17: each phase's infrastructure is
+│                         fully exercised by its own test suite instead)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```

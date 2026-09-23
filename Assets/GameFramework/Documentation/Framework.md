@@ -4354,6 +4354,270 @@ SDK behavior (actual event delivery, real crash symbolication) has not been veri
 device or provider — only the abstraction/orchestration layer and its mock providers have been
 tested.
 
+## Remote Config + Live Operations Framework
+
+Phase 17 adds `GameFramework.RemoteConfig` — a game-facing Remote Config/Feature Flag/Live Ops API so
+gameplay/UI code never depends on Firebase Remote Config, Unity Remote Config, or PlayFab directly —
+plus a fifth opt-in bridge in the existing `GameFramework.Analytics.Integration` assembly forwarding
+its published events into Analytics.
+
+```text
+Game / Gameplay / UI
+        v
+IRemoteConfigService / IFeatureFlagService / ILiveOpsService   (GameFramework.RemoteConfig)
+        v
+IRemoteConfigProvider                                           (provider seam)
+        v
+NoOpRemoteConfigProvider                       (RemoteConfigBootstrapper's default)
+Providers.Mock.MockRemoteConfigProvider        (opt-in, Editor/testing)
+        v
+(a future FirebaseRemoteConfigProvider / UnityRemoteConfigProvider, once an SDK is installed)
+```
+
+No remote config SDK is installed in this project (`Packages/manifest.json` has none of Firebase
+Remote Config, Unity Remote Config, or PlayFab) — see "Provider status" below for exactly what
+installing one would require.
+
+### Configuration is data, not authority
+
+Remote Config is configuration data; Live Operations is game behavior driven by that configuration
+plus time/state (CLAUDE.md's Phase 17 brief, section 3). `IRemoteConfigService` never becomes a
+generic database, and `ILiveOpsService` never grows into a full live-service platform — see "Known
+limitations / non-goals" below. Three focused interfaces exist, not one
+`ILiveOpsEverythingService` (CLAUDE.md's Phase 17 brief, section 5): `IRemoteConfigService`,
+`IFeatureFlagService` (a thin layer over the first), and `ILiveOpsService`. `IRemoteConfigProvider` is
+the one provider seam; a separate `ILiveEventService`/`ILiveOpsClock` service was deliberately not
+added — `ILiveOpsClock` is a small, non-`IGameService` time abstraction (the same "static
+utility/small interface, not a service, when there's no lifecycle to own" reasoning
+`Performance.MemoryDiagnostics`/`Platform.DeviceInfo` already established), constructed alongside
+`LiveOpsService` rather than registered separately.
+
+### Remote Config
+
+- **`IRemoteConfigService`** (`RemoteConfigService`) — `GetBool`/`GetInt`/`GetLong`/`GetFloat`/
+  `GetDouble`/`GetString(key, defaultValue)`, `HasKey`, `TryGetDefinition`, `Fetch(onComplete)`,
+  `ActiveSnapshot`, `Definitions`, `State`, `ServerTimeOffset`, `IsStale`, `GetDiagnostics()`. Never
+  throws for a missing/mistyped key — every Get* falls back to `defaultValue` (CLAUDE.md's Phase 17
+  brief, section 55).
+- **Local defaults, always** (`RemoteConfigDefinition`, authored inside `RemoteConfigConfiguration`
+  the same "plain serializable entry, not its own asset" way `Monetization.Ads.AdPlacementConfig`
+  already established) — a declared definition's `Key`/`Type`/`RemoteConfigTypedValue` default,
+  optional numeric `[Min, Max]` range, informational `Domain`, and informational
+  `RuntimeChangePolicy` (`StartupOnly`/`SafeAtRuntime`/`NextSession`/`NextLevel` — purely advisory;
+  this framework activates a validated snapshot atomically regardless of policy, and it is entirely up
+  to each consumer to decide when it is safe to re-read a value it cares about, CLAUDE.md's Phase 17
+  brief, section 36). A game may also read an entirely undeclared, ad hoc key (section 10) — such a
+  key only ever resolves from an actual fetched/cached value and otherwise falls back to the
+  caller-supplied default rather than one authored in a definition.
+- **Precedence** (CLAUDE.md's Phase 17 brief, section 6) — every candidate snapshot is built by
+  copying every declared definition's local default, then overlaying (in order) a valid cached payload
+  and, on top of that, a valid fresh fetch; each layer only ever replaces the keys it actually
+  supplies. Both the startup cache load and every `Fetch` call rebuild from a *fresh* copy of the
+  defaults rather than layering onto whatever was previously active, so a key a provider used to send
+  but has since stopped sending reverts to its default instead of lingering
+  (`RemoteConfigServiceTests.Fetch_SecondFetchOmittingAKey_RevertsThatKeyToDefault`).
+- **Atomicity** (sections 14-15/56/77) — a candidate snapshot is fully validated (type match, numeric
+  range, schema version) before it is ever activated; a single invalid key rejects the *entire*
+  candidate, leaving whatever was previously active still active
+  (`RemoteConfigServiceTests.Fetch_InvalidType_RejectsEntireSnapshot` asserts a valid key in the same
+  rejected payload was not applied either). `RemoteConfigSnapshot` itself is immutable — a new
+  activation produces a brand-new instance (a plain reference swap, hence atomic from any reader's
+  perspective) rather than mutating the previous one, so a consumer holding a snapshot reference never
+  sees a value change mid-read.
+- **Fetch lifecycle** (`RemoteConfigState`: `NotInitialized`/`Initializing`/`Ready`/`Fetching`/
+  `Activating`/`Active`/`Failed`) — `Ready` and `Active` are distinguished purely by whether
+  `ActiveSnapshot.Version` is 0 (defaults only) or greater (at least one successful cache/remote
+  activation), rather than a separately tracked "prior idle state" to restore after a failed fetch.
+  The brief's suggested `Fetched`/`Unavailable` states are deliberately collapsed — a successful fetch
+  flows straight from `Fetching` into `Activating` in the same call, and a provider-reported
+  "unavailable" outcome is surfaced per-attempt via `RemoteConfigFetchResultKind` rather than as a
+  lingering service-wide state; `Failed` is reserved for the provider's own `Initialize` failing,
+  which a subsequent `Fetch` retries automatically.
+- **`Fetch` is never automatic unless configured** (`RemoteConfigConfiguration.FetchOnStartup`,
+  section 27) — `Initialize` always reaches `Ready`/`Active` immediately using defaults/cache; a game
+  decides whether to also wait on an explicit `Fetch()` before showing its first screen.
+  `AutoFetchOnResume` (section 85) optionally re-fetches on `Performance.Mobile.ApplicationResumedEvent`
+  only when `IsStale` — never unconditionally on every resume.
+- **Fetch timeout and re-entrancy** — a fetch already in progress rejects a second call with
+  `RemoteConfigFetchResultKind.AlreadyInProgress` (the same re-entrancy precedent
+  `INavigationService`/`IPlayerProfileService` already established for their own concurrent-request
+  handling). A fetch that does not complete within `FetchTimeoutSeconds` resolves as `TimedOut`,
+  keeping the existing configuration; an internal fetch-generation counter makes a slow provider's
+  callback arriving *after* that timeout already resolved the attempt a silent no-op rather than
+  resurrecting a stale result (`RemoteConfigServiceTests.Fetch_LateProviderCallbackAfterTimeout_IsIgnored`).
+- **Cache** (`RemoteConfigCacheData`, its own `IPersistenceService` key
+  `"GameFramework.RemoteConfig.Cache"` — entirely separate from player-save data, section 31) —
+  written on every successful activation. At startup, `RemoteConfigCacheStatus` is one of `NoCache`/
+  `Fresh`/`Stale`/`Expired`/`Corrupt`: a cache from a different `RemoteConfigEnvironment`, or targeting
+  an unsupported schema version, is `Corrupt` and discarded; older than
+  `CacheExpirationSeconds` is `Expired` and discarded; older than `StaleThresholdSeconds` is `Stale`
+  and still activated only if `UseStaleCache` is true (section 29: "a stale cache may still be
+  preferable to no configuration"). A loaded cache is validated exactly like a fresh fetch before
+  activation — corruption at the value level (not just the envelope level) still falls back to
+  defaults rather than partially applying.
+- **Versioning** — `RemoteConfigSnapshot.Version` (the provider's own payload version, for
+  diagnostics) is distinct from `SchemaVersion` (structural compatibility). A fetched/cached payload
+  targeting a schema newer than `RemoteConfigConfiguration.SupportedSchemaVersion` is rejected outright
+  (section 17) rather than risking misinterpreting an incompatible structure.
+- **Server time** (sections 39-41) — `RemoteConfigProviderResult.ServerTimeUtc`, when a provider
+  supplies one, sets `IRemoteConfigService.ServerTimeOffset` (`serverTime - DateTime.UtcNow` at receipt
+  time); this offset is recomputed only on a successful fetch, never every frame. With no provider
+  ever supplying a server time, the offset stays `TimeSpan.Zero` and Live Ops scheduling is explicitly
+  local-time-only (see below).
+
+### Feature Flags
+
+- **`IFeatureFlagService`** (`FeatureFlagService`) — `IsEnabled(key, defaultValue)` is exactly
+  `remoteConfig.GetBool(key, defaultValue)`; this interface exists purely so game code reads as "is
+  this feature on" rather than "get this bool" (section 32). Absence of remote configuration is never
+  treated as "enabled" (section 33) — with no override, `IsEnabled` returns the declared definition's
+  default (or the caller-supplied default for an undeclared flag key).
+- **Change notification** (`FlagChanged` C# event + `FeatureFlagChangedEvent`, section 35) —
+  `FeatureFlagService` tracks a resolved baseline for every *declared* boolean definition and diffs it
+  against each new activation, raising the notification only for a flag whose resolved value actually
+  changed (`FeatureFlagServiceTests.RemoteFetch_SameValueAsBefore_DoesNotRaiseFlagChanged`). An
+  undeclared, ad hoc flag key still works via `IsEnabled`; it has no baseline to diff against and so
+  never raises this event.
+- **Never a security mechanism** (section 34) — feature flags never gate secrets, privileged
+  operations, purchase validation, or anti-cheat; a player can always inspect a client-side value.
+
+### Live Operations
+
+- **`ILiveOpsService`** (`LiveOpsService`) — `GetEventIds`, `TryGetEvent`, `GetState`, `IsActive`,
+  `GetActiveEvents`, `LiveEventStarted`/`LiveEventEnded` C# events (+ matching
+  `LiveEventStartedEvent`/`LiveEventEndedEvent`), `GetDiagnostics()`. Provides queries only — this
+  framework never builds a Live Ops UI (section 50); a game's own UI decides how to present an event.
+- **A flat, UTC-only schedule, not a calendar engine** (`LiveEventDefinition`, authored inside
+  `LiveOpsConfiguration` the same "plain serializable entry" way `RemoteConfigDefinition` is) —
+  `Id`/`Enabled`/round-trip-UTC-string `Start`/`End`/`TitleLocalizationKey`/`DescriptionLocalizationKey`/
+  `IconId`/an optional conventional `ConfigKeyPrefix` a game may use to build its own sub-keys for an
+  event's associated configuration (section 46 — this framework never reads or interprets those
+  sub-keys itself). Deliberately no recurrence engine (section 44).
+- **`LiveEventState`** — `Upcoming`/`Active`/`Ended`/`Disabled`/`Invalid` (an unparsable or
+  end-before-start schedule), resolved from `LiveEvent.ResolveState(nowUtc)`. Distinct from "remote
+  config unavailable" (section 38) — an event with an unreachable provider simply keeps evaluating
+  against its last-good authored/cached schedule, exactly like any other configuration value's
+  fallback.
+- **Optional per-event remote override** — three reserved, ad hoc `IRemoteConfigService` keys per
+  event (no `RemoteConfigDefinition` needs to declare them): `liveops.{id}.enabled` (bool),
+  `liveops.{id}.start_utc`/`liveops.{id}.end_utc` (round-trip UTC strings). A remote payload omitting
+  one of these simply leaves that event's authored local value in effect — the same
+  fallback-per-key precedence every other configuration value uses
+  (`LiveOpsServiceTests.RemoteOverride_DisablesEvent`).
+- **`ILiveOpsClock`** (section 40) — `UtcNow` only; `RemoteConfigLiveOpsClock` (the default,
+  `DateTime.UtcNow + IRemoteConfigService.ServerTimeOffset`) and `ManualLiveOpsClock` (a settable clock
+  for Editor/QA simulation, section 68) both ship. Tests use `ManualLiveOpsClock` to simulate
+  before/at/during/after an event without waiting in real time
+  (`LiveOpsServiceTests.BeforeStart_StateIsUpcoming`/`DuringWindow_StateIsActive`/`AfterEnd_StateIsEnded`).
+- **Transition detection** — effective schedules (and their `LiveEventState`) are recomputed on every
+  `IRemoteConfigService.ConfigurationActivated` *and* on a low-frequency `ITimerService.StartRepeating`
+  poll (`LiveOpsConfiguration.PollIntervalSeconds`, default 15s) — never a per-frame `Update` (see
+  CLAUDE.md's Tick Rules) — so a pure time-based Upcoming→Active→Ended transition is still detected
+  between configuration activations, raising `LiveEventStarted`/`LiveEventEnded` only on an actual
+  state change.
+
+### Provider status
+
+| Provider | Installed | Implemented |
+|---|---|---|
+| Remote config SDK (Firebase Remote Config / Unity Remote Config / PlayFab) | No | No — `IRemoteConfigProvider` is ready; a future adapter (e.g. `GameFramework.RemoteConfig.Firebase`, referencing only that SDK) would inspect whichever version is actually installed and implement `IRemoteConfigProvider` against its real API, never against guessed APIs (CLAUDE.md's Phase 17 brief, section 22). |
+
+`NoOpRemoteConfigProvider` is `RemoteConfigBootstrapper`'s default (section 23: a production build
+must not accidentally use a Mock provider) — its `Fetch` always reports failure, so
+`RemoteConfigService` simply keeps whatever defaults/cache are already active; this is what keeps the
+framework fully usable (typed access, local defaults, feature flags, Live Ops against authored
+schedules) with zero external SDK present. `Providers.Mock.MockRemoteConfigProvider` is a
+deterministic, Editor/test-safe provider (`AlwaysSucceed`/`AlwaysUnavailable`/`AlwaysTimeout`/
+`SchemaMismatch` simulation modes, `MockRemoteConfigEntry[]` authored values) —
+`RemoteConfigBootstrapper` exposes an inspector toggle to opt into it for local development/testing.
+Swapping in a real provider once an SDK is installed means changing that one constructor argument
+only — nothing in `RemoteConfigService`/`FeatureFlagService`/`LiveOpsService` changes.
+
+### Integration (fifth bridge in the existing optional Analytics.Integration assembly)
+
+`RemoteConfigAnalyticsIntegration` — the same opt-in, plain `IDisposable`, never-bootstrapper-
+registered pattern the other four `Analytics.Integration` bridges already use — forwards
+`ConfigFetchFailedEvent`/`ConfigActivatedEvent`/`ConfigRejectedEvent`/`FeatureFlagChangedEvent`/
+`LiveEventStartedEvent`/`LiveEventEndedEvent` into `configuration_fetch_failed`/
+`configuration_activated`/`configuration_rejected`/`feature_flag_evaluated`/`live_event_started`/
+`live_event_completed` (`EventNames`). Depends only on the *event types* it subscribes to, never on
+`GameFramework.RemoteConfig`'s services directly, so it works whether or not
+`IFeatureFlagService`/`ILiveOpsService` end up registered in a given game:
+
+```csharp
+var events = GameBootstrapper.Instance.Services.Get<IEventService>();
+var analytics = GameBootstrapper.Instance.Services.Get<IAnalyticsService>();
+var diagnostics = GameBootstrapper.Instance.Services.Get<IDiagnosticsService>();
+
+var remoteConfigBridge = new RemoteConfigAnalyticsIntegration(events, analytics, diagnostics);
+
+// on shutdown:
+remoteConfigBridge.Dispose();
+```
+
+This grows `GameFramework.Analytics.Integration`'s reference list to add `GameFramework.RemoteConfig`
+alongside GameFlow/UI.Navigation/Tutorials/Monetization — the same reasoning that assembly's own
+"why Integration is a separate assembly" remarks already give for the other four: this instrumentation
+is purely optional telemetry a game may not want at all, so it stays out of the core
+`GameFramework.Analytics` assembly's reference list.
+
+### Safety
+
+- **Remote configuration provides configuration, not authority** (section 60/83-84) — this framework
+  never uses Remote Config for secrets, credentials, purchase authorization, server authority, or
+  anti-cheat, and it never lets a remote value modify player coins/inventory/progression/ownership
+  directly; game systems remain authoritative over player state. A product/entitlement's grant
+  (Phase 15) is fixed, authored data — Remote Config may supply a *value* those systems consume (e.g.
+  an ad cooldown, a reward multiplier), but this framework adds no mechanism for a remote payload to
+  set an entitlement or bypass `IPurchaseService`'s validation.
+- **Feature flags are not security** (section 34, repeated here deliberately) — never gate anything a
+  player must not be able to flip client-side.
+- **No player targeting/A-B testing engine** (sections 61-62) — no experimentation platform,
+  statistical analysis, or behavior-prediction targeting exists; a game wanting a simple variant can
+  read an ordinary string/int key (e.g. `"experiments.button_color"`) and interpret it itself.
+
+### Testing
+
+`GameFramework.RemoteConfig.Tests` (EditMode, 30 tests) reuses the `TestRegistryFactory`/reflection-
+based `TestDefinitions` pattern established since Phase 6, plus a fully-controllable
+`FakeRemoteConfigProvider` (distinct from the shipped `MockRemoteConfigProvider`, covered in its own
+right by `MockProviderTests`) so multi-step scenarios (a suppressed callback simulating a hung fetch,
+an exact invalid/out-of-range/schema-mismatched payload) are deterministic. Covers: declared-default
+resolution and undeclared-key fallback; successful fetch/activation with `ConfigActivatedEvent`
+published; atomicity (an invalid key rejects a payload's otherwise-valid keys too); numeric-range and
+schema-version rejection; provider-unavailable fallback; `AlreadyInProgress` re-entrancy; a late
+provider callback after the service's own fetch-timeout already resolved being ignored; a key a later
+fetch omits reverting to its default rather than lingering; cache fresh/stale/expired/corrupt
+(unsupported schema)/missing/cross-environment behavior via two independent `RemoteConfigService`
+instances sharing one `InMemoryPersistenceStorage` (simulating an application restart);
+`FeatureFlagService` default resolution and change-notification diffing (only on an actual value
+change); `LiveOpsService` Upcoming/Active/Ended state resolution and start/end transition events
+driven through a `ManualLiveOpsClock`, plus a per-event remote override disabling an authored event;
+and the shipped `MockRemoteConfigProvider`'s four simulation modes. 30/30 Phase 17 tests pass; the
+full project suite (853 EditMode + 171 PlayMode tests) was re-run after this phase with zero
+regressions (measured directly via the Unity Test Runner, not estimated).
+
+### Known limitations / non-goals
+
+A backend server, an admin dashboard/CMS, cloud save, player authentication, server-authoritative
+economy/purchases, a complete A/B testing/experimentation platform, advanced player targeting/
+sensitive-data profiling, a Battle Pass/season/marketplace/trading/live-currency system, a remote
+asset CDN, a full networking framework, notifications, a social system, and any game-specific remote
+config key/live event content are all explicitly out of scope for this phase (CLAUDE.md's Phase 17
+brief, section 96) — `IRemoteConfigProvider` is the seam a future phase or a game's own provider
+adapter would extend. No Firebase Remote Config/Unity Remote Config/PlayFab adapter exists because no
+such SDK is installed in this project (see "Provider status" above). No editor simulation UI was built
+beyond menu-item diagnostics/content validation (`Editor.RemoteConfig.RemoteConfigDiagnosticsMenu`/
+`RemoteConfigContentValidator`) — the same "not a game-facing dashboard, don't build an entire
+remote-config editor product" precedent `MonetizationDiagnosticsMenu`/`PlatformDiagnosticsMenu`
+already established (CLAUDE.md's Phase 17 brief, section 20/68). Live Ops scheduling is genuinely
+local-time-only unless a provider supplies a server timestamp — with `NoOpRemoteConfigProvider`/
+`MockRemoteConfigProvider` (the latter does supply one, for realism) as the only shipped providers,
+a real backend's server-time behavior has not been verified. Real provider SDK behavior (an actual
+network fetch, real A/B assignment, a real backend's schema versioning) has not been verified against
+a real device or provider — only the abstraction/orchestration layer and its mock provider have been
+tested.
+
 ## Roadmap
 
 Phase 3 deliberately did **not** include: Progression, Rewards, Currency, Inventory, Economy,
@@ -4483,14 +4747,24 @@ Analytics/Sentry/Crashlytics adapter (no such SDK is installed in this project) 
 `IAnalyticsProvider`/`ICrashReportingProvider` are the seams a game or a later phase would extend, not
 something this phase builds itself.
 
-Candidate next phases, based on the actual architecture after Phase 16 (none committed to yet):
-**Phase 17 — Remote Config + Live Operations Framework**, the phase this project's own Phase 16 brief
-names as the intended next step; or a first concrete game built on top of everything through Phase
-16, which would likely surface real integration gaps (e.g. an actual GameFlow<->Navigation<->PlayerData
-bootstrap bridge beyond plain event mappings, a concrete need for `NavigationGuardResult.Defer` retry
-semantics, a genuine need for gamepad/keyboard UI focus navigation, a UI-side safe-area component
-consuming Phase 14's `IScreenService`, or a real ad/IAP/analytics/crash SDK adapter once one is
-installed) faster than a seventeenth infrastructure-only phase would; or, if multi-profile saves for
-the existing Progression/Settings/Tutorial systems become a real requirement, a deliberate,
-explicitly-scoped migration of those six systems onto profile-scoped `IPersistenceService` keys (the
-known limitation Phase 13's own section calls out).
+Phase 17 — Remote Config + Live Operations Framework. Done — see
+[Remote Config + Live Operations Framework](#remote-config--live-operations-framework). Explicitly
+out of scope and left for later (see that section's own "Known limitations / non-goals"): a backend
+server, an admin dashboard/CMS, cloud save, a complete A/B testing/experimentation platform, advanced
+player targeting, a Battle Pass/season/marketplace/live-currency system, a remote asset CDN,
+notifications, and a real Firebase Remote Config/Unity Remote Config/PlayFab adapter (no such SDK is
+installed in this project) — `IRemoteConfigProvider` is the seam a game or a later phase would
+extend, not something this phase builds itself.
+
+Candidate next phases, based on the actual architecture after Phase 17 (none committed to yet):
+**Phase 18 — Notifications + Deep Links + App Lifecycle Framework**, the phase this project's own
+Phase 17 brief names as the intended next step; or a first concrete game built on top of everything
+through Phase 17, which would likely surface real integration gaps (e.g. an actual GameFlow<->
+Navigation<->PlayerData bootstrap bridge beyond plain event mappings, a concrete need for
+`NavigationGuardResult.Defer` retry semantics, a genuine need for gamepad/keyboard UI focus
+navigation, a UI-side safe-area component consuming Phase 14's `IScreenService`, or a real ad/IAP/
+analytics/crash/remote-config SDK adapter once one is installed) faster than an eighteenth
+infrastructure-only phase would; or, if multi-profile saves for the existing Progression/Settings/
+Tutorial systems become a real requirement, a deliberate, explicitly-scoped migration of those six
+systems onto profile-scoped `IPersistenceService` keys (the known limitation Phase 13's own section
+calls out).

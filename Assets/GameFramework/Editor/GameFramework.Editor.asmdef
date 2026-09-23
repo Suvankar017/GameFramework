@@ -19,7 +19,8 @@
         "GameFramework.PlayerData",
         "GameFramework.Platform",
         "GameFramework.Monetization",
-        "GameFramework.Analytics"
+        "GameFramework.Analytics",
+        "GameFramework.RemoteConfig"
     ],
     "includePlatforms": [
         "Editor"

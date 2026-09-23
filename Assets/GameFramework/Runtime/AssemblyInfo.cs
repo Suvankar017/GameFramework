@@ -91,3 +91,9 @@ using System.Runtime.CompilerServices;
 // AnalyticsService nor DiagnosticsService needs a fake ITimeService, since session timing uses
 // wall-clock DateTime.UtcNow directly) for testing AnalyticsService/DiagnosticsService in isolation.
 [assembly: InternalsVisibleTo("GameFramework.Analytics.Tests")]
+
+// Phase 17 remote config test assembly reuses the same pattern to build a minimal, already-
+// initialized ServiceRegistry (fake ITimeService, a real EventService/TimerService/
+// PersistenceService-over-InMemoryPersistenceStorage) for testing RemoteConfigService/
+// FeatureFlagService/LiveOpsService in isolation.
+[assembly: InternalsVisibleTo("GameFramework.RemoteConfig.Tests")]

@@ -1,16 +1,10 @@
 {
-    "name": "GameFramework.Analytics.Integration",
-    "rootNamespace": "GameFramework.Analytics.Integration",
+    "name": "GameFramework.RemoteConfig",
+    "rootNamespace": "GameFramework.RemoteConfig",
     "references": [
         "GameFramework.Core",
         "GameFramework.Runtime",
-        "GameFramework.Analytics",
-        "GameFramework.GameFlow",
-        "GameFramework.UI",
-        "GameFramework.UI.Navigation",
-        "GameFramework.Tutorials",
-        "GameFramework.Monetization",
-        "GameFramework.RemoteConfig"
+        "GameFramework.Performance"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
