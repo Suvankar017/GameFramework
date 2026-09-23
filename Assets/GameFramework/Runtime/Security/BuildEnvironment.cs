@@ -22,6 +22,20 @@ namespace GameFramework.Runtime.Security
             false;
 #endif
 
+        /// <summary>Phase 20: the deployment environment the framework build pipeline stamped into
+        /// this player via a GAMEFRAMEWORK_ENV_* define, or Unspecified (Editor, or a build made
+        /// outside the pipeline). Compile-time only, so it cannot be changed on a device.</summary>
+        public static DeploymentEnvironment Deployment =>
+#if GAMEFRAMEWORK_ENV_PRODUCTION
+            DeploymentEnvironment.Production;
+#elif GAMEFRAMEWORK_ENV_STAGING
+            DeploymentEnvironment.Staging;
+#elif GAMEFRAMEWORK_ENV_DEVELOPMENT
+            DeploymentEnvironment.Development;
+#else
+            DeploymentEnvironment.Unspecified;
+#endif
+
         /// <summary>True only inside the Unity Editor (Edit or Play Mode).</summary>
         public static bool IsEditor =>
 #if UNITY_EDITOR

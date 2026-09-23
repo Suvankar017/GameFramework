@@ -36,6 +36,14 @@ namespace GameFramework.Monetization.Purchases
         public EntitlementId GrantedEntitlementId => new EntitlementId(_grantedEntitlementId);
         public RewardId GrantedRewardId => new RewardId(_grantedRewardId);
 
+        /// <summary>The authored Google Play product id. Phase 20: exposed read-only for build-time
+        /// store-readiness validation; runtime code should keep using <see cref="ResolvePlatformProductId"/>.</summary>
+        public string AndroidProductId => _androidProductId;
+
+        /// <summary>The authored App Store product id. Phase 20: exposed read-only for build-time
+        /// store-readiness validation; runtime code should keep using <see cref="ResolvePlatformProductId"/>.</summary>
+        public string IosProductId => _iosProductId;
+
         /// <summary>Resolves the store product id for the running platform - Android/iOS as
         /// authored, or empty in the Editor/any other platform (the mock provider does not need a
         /// real store id).</summary>

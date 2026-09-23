@@ -16,10 +16,15 @@ namespace GameFramework.Feedback
 
         public void Trigger(HapticStrength strength)
         {
+            // Handheld only exists in Android/iOS player builds (and the Editor). Without this guard,
+            // every standalone/WebGL player build of the framework fails to compile. Found by the
+            // Phase 20 build pipeline's first real Windows build.
+#if UNITY_ANDROID || UNITY_IOS
             if (IsSupported)
             {
                 Handheld.Vibrate();
             }
+#endif
         }
     }
 }

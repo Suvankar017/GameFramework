@@ -2524,3 +2524,88 @@ state authoritative, and it does not make it impossible to tamper with.**
   must still resolve optional dependencies with `TryGet`, so one unavailable provider doesn't cascade.
 * Do not add retry loops or artificial delays to hide an initialization failure. A game that cannot
   run without a service checks `InitializationFailures`/`TryGet` and presents the failure itself.
+
+---
+
+# 84. Phase 20 Build, Release & Store Pipeline
+
+Phase 20 added Editor-only build orchestration: `GameFramework.Editor.Build` in `Editor/Build/`, inside
+the existing `GameFramework.Editor` assembly. It sits on top of Unity's `BuildPipeline.BuildPlayer`. The
+full command line, file formats, validator list, and examples live in
+`Assets/GameFramework/Documentation/Framework.md`'s "Build, Release & Store Pipeline" section. This
+section is the stable rule summary; that one is the living reference.
+
+## Build Architecture Rules
+
+* Build tooling stays Editor-only. The only runtime additions are:
+  * `Runtime.FrameworkVersion`
+  * `Runtime.Security.DeploymentEnvironment` / `BuildEnvironment.Deployment`
+  * read-only `ProductDefinition.AndroidProductId` / `IosProductId`
+
+  Do not add build logic to player assemblies.
+* Use Unity's `BuildPipeline`/`BuildReport`/`PlayerSettings`. Do not build a custom build engine, a
+  CI-vendor-specific integration, or any store-submission/upload automation.
+* A build is one `FrameworkBuildProfile` (target × environment) plus optional explicit overrides.
+  Add a profile field only when a value genuinely varies per build. Everything else stays in Player
+  Settings, which the pipeline validates but does not rewrite.
+* Project-specific checks are `IBuildValidator`s passed to `new FrameworkBuildPipeline(...)`. Do not
+  fork the framework validators for game rules.
+
+## Environment & Define Rules
+
+* There is one environment model: `DeploymentEnvironment` (`Development`/`Staging`/`Production`),
+  which extends Phase 19's `BuildEnvironment`. Do not add a second environment system.
+  `RemoteConfigEnvironment` stays Phase 17's own setting, and validation checks it matches.
+* Environment defines (`GAMEFRAMEWORK_ENV_*`) are added **only** by the pipeline, through
+  `BuildPlayerOptions.extraScriptingDefines`. Never set them in Player Settings; validation rejects
+  that. Never make the pipeline write scripting defines to Player Settings.
+* Production builds must not be Unity Development Builds. They must not contain `DEBUG`/
+  `DEVELOPMENT*`/cheat/mock defines, or enabled mock-provider toggles in the build scenes. These are
+  validation errors, not warnings.
+
+## Versioning Rules
+
+* The application version is `MAJOR[.MINOR[.PATCH]]` digits only. The platform build number is an
+  integer in 1..2,100,000,000, chosen by the profile's `BuildNumberScheme` or an explicit
+  `-buildNumber`. The framework never invents a version or build number.
+* Framework version (`FrameworkVersion.Version`), application version (`bundleVersion`), and platform
+  build number are three different things. Bump `FrameworkVersion` when the framework changes.
+* Version/build number/application id/signing are applied temporarily and restored in `finally`.
+  They are persisted only when a profile opts into `PersistVersionChanges`. A build must never leave
+  Player Settings silently changed.
+* Write a Unity setting only when its value actually differs, and restore only what was written.
+  Writing a setting back to its "own" value is not a no-op. `SetApplicationIdentifier` materializes
+  explicit ids and sets `overrideDefaultApplicationIdentifier`, and an empty `keystoreName`
+  serializes as `'{inproject}: '`. Both dirtied ProjectSettings.asset during Phase 20's first real
+  builds.
+
+## Output & Metadata Rules
+
+* Artifact names are deterministic: `{slug}_{Platform}_{Environment}_{Version}_{BuildNumber}`. Output
+  goes to `{root}/{Platform}/{Environment}/` (default root `Builds/`, which is git-ignored). Never
+  timestamps, random parts, or machine-specific paths.
+* Never delete previous artifacts. An artifact at the identical path is a validation error unless the
+  caller explicitly passes `-overwrite`.
+* `build.json`/`release-manifest.json`/`build-report.json` are versioned (`SchemaVersion`), use UTC
+  timestamps, and must never contain secrets, environment-variable values, or user/machine names.
+
+## Signing & Secrets Rules
+
+* Signing credentials never enter the repository. Profiles store only the *names* of the Android
+  signing environment variables. CI supplies the keystore and passwords, and the pipeline applies them
+  only for the duration of the build. Never log, serialize, or echo their values, and never accept
+  secrets as command-line arguments.
+* A release Android build without release signing fails validation (Production) or warns (Staging).
+  Never fall back silently to debug signing.
+* iOS signing defaults to external (Xcode/CI). Distinguish "Unity project validation" from "Xcode
+  signing". Do not require Apple credentials in Unity.
+
+## CI Rules
+
+* The entry point is `GameFramework.Editor.Build.CommandLineBuild.Build` (`-executeMethod`).
+  `-profile` is required. `-environment`/`-buildTarget` are assertions against the profile, not
+  overrides.
+* Always exit through `EditorApplication.Exit` with a meaningful code: 0 success, 1 unexpected, 2
+  arguments, 3 validation, 4 build, 5 post-build. Never let a failed preflight or build exit 0, and
+  never swallow a build exception.
+* Validation must run offline. Never query networks, stores, or dashboards during a build.

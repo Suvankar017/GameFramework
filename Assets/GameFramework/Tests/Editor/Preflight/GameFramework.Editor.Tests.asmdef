@@ -3,6 +3,9 @@
     "rootNamespace": "GameFramework.Editor.Tests",
     "references": [
         "GameFramework.Editor",
+        "GameFramework.Core",
+        "GameFramework.Runtime",
+        "GameFramework.RemoteConfig",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

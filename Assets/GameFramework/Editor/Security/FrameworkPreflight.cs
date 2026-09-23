@@ -85,6 +85,15 @@ namespace GameFramework.Editor.Security
             return issues;
         }
 
+        /// <summary>Only the committed-secret scan (Assets/ and ProjectSettings/). Reused by the Phase 20
+        /// build pipeline's release-safety validation so the patterns live in one place.</summary>
+        public static List<PreflightIssue> ScanForSecrets()
+        {
+            var issues = new List<PreflightIssue>();
+            CheckSecrets(issues);
+            return issues;
+        }
+
         /// <summary>Returns the names of every secret pattern matched in <paramref name="text"/>, with
         /// the 1-based line of the first match. Never returns the matched text.</summary>
         public static List<(string PatternName, int Line)> FindSecretPatterns(string text)

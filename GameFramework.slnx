@@ -9,6 +9,7 @@
   <Project Path="GameFramework.Progression.csproj" />
   <Project Path="GameFramework.RemoteConfig.Tests.csproj" />
   <Project Path="GameFramework.Notifications.Tests.csproj" />
+  <Project Path="GameFramework.Editor.csproj" />
   <Project Path="GameFramework.Unlocks.Tests.csproj" />
   <Project Path="GameFramework.Performance.csproj" />
   <Project Path="GameFramework.UI.Navigation.csproj" />
@@ -16,7 +17,6 @@
   <Project Path="GameFramework.Tutorials.Tests.csproj" />
   <Project Path="GameFramework.Cameras.Cinemachine.csproj" />
   <Project Path="GameFramework.Platform.csproj" />
-  <Project Path="GameFramework.Editor.csproj" />
   <Project Path="GameFramework.Presentation.Tests.csproj" />
   <Project Path="GameFramework.Runtime.Tests.csproj" />
   <Project Path="GameFramework.Samples.Phase4Demo.csproj" />
@@ -33,6 +33,7 @@
   <Project Path="GameFramework.Localization.csproj" />
   <Project Path="GameFramework.Samples.Phase12Demo.csproj" />
   <Project Path="GameFramework.DeepLinks.csproj" />
+  <Project Path="GameFramework.Editor.Tests.csproj" />
   <Project Path="GameFramework.Audio.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.csproj" />
   <Project Path="GameFramework.Analytics.Integration.csproj" />
@@ -62,7 +63,6 @@
   <Project Path="GameFramework.PlayerSystems.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase10Demo.csproj" />
   <Project Path="GameFramework.Samples.Phase3Demo.csproj" />
-  <Project Path="GameFramework.Editor.Tests.csproj" />
   <Project Path="GameFramework.Gameplay.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Runtime.Tests.Runtime.csproj" />
   <Project Path="GameFramework.Samples.Phase6Demo.csproj" />

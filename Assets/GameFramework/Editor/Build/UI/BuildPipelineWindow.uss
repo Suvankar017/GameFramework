@@ -1,0 +1,50 @@
+.gf-build-root {
+    flex-grow: 1;
+    padding: 6px;
+}
+
+.gf-build-muted {
+    opacity: 0.75;
+    white-space: normal;
+    margin: 2px 3px 6px 3px;
+}
+
+.gf-build-buttons {
+    flex-direction: row;
+    margin: 6px 0;
+}
+
+.gf-build-buttons > Button {
+    flex-grow: 1;
+}
+
+.gf-build-status {
+    -unity-font-style: bold;
+    margin: 4px 3px;
+    white-space: normal;
+}
+
+.gf-build-issues {
+    flex-grow: 1;
+    min-height: 120px;
+}
+
+.gf-issue-row {
+    padding: 2px 3px;
+}
+
+.gf-issue-row Label {
+    white-space: normal;
+}
+
+.gf-issue--error {
+    color: rgb(240, 100, 100);
+}
+
+.gf-issue--warning {
+    color: rgb(240, 200, 80);
+}
+
+.gf-issue--pass {
+    color: rgb(120, 200, 120);
+}

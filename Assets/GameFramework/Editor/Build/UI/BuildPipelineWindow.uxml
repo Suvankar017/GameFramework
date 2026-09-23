@@ -1,0 +1,17 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements">
+    <ui:VisualElement class="gf-build-root">
+        <uie:ObjectField name="profile" label="Build Profile" />
+        <ui:Label name="profile-summary" class="gf-build-muted" />
+        <ui:TextField name="version" label="Version Override" tooltip="Empty = profile / Player Settings" />
+        <ui:TextField name="build-number" label="Build Number Override" tooltip="Empty = the profile's scheme" />
+        <ui:Toggle name="overwrite" label="Allow Overwrite" />
+        <ui:VisualElement class="gf-build-buttons">
+            <ui:Button name="validate" text="Validate" />
+            <ui:Button name="build" text="Build" />
+            <ui:Button name="open-output" text="Open Output Folder" />
+        </ui:VisualElement>
+        <ui:Label name="status" class="gf-build-status" />
+        <ui:ListView name="issues" class="gf-build-issues" />
+        <ui:Label name="last-build" class="gf-build-muted" />
+    </ui:VisualElement>
+</ui:UXML>

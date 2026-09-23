@@ -5123,6 +5123,268 @@ phase was 1047 EditMode + 171 PlayMode tests, all passing.
 - `IsVerifiedThisSession` and every other check here are client-side. A backend `IPurchaseValidator`
   is the extension point for real payment verification.
 
+## Build, Release & Store Pipeline
+
+Phase 20 adds build and release orchestration on top of Unity's own `BuildPipeline.BuildPlayer`. It is
+not a replacement build engine, a CI system, or a store-submission tool. All build tooling is
+Editor-only (`GameFramework.Editor`, namespace `GameFramework.Editor.Build`, folder `Editor/Build/`).
+The only runtime additions are:
+
+- `GameFramework.Runtime.FrameworkVersion`
+- `Runtime.Security.DeploymentEnvironment` and `BuildEnvironment.Deployment`
+- read-only `ProductDefinition.AndroidProductId`/`IosProductId`
+
+```text
+Build Command (window / CLI)
+  → FrameworkBuildProfile            target × environment, explicit settings
+  → BuildContext.Resolve             version, build number, app id, scenes, defines, output path
+  → Git capture + scene/prefab scan  read-only
+  → preflight validators             structured Error/Warning/Info/Pass
+  → (any Error ⇒ stop)
+  → TemporaryBuildSettings.Apply     version/build number/app id/AAB/Android signing
+  → BuildPipeline.BuildPlayer        Unity's build, extraScriptingDefines, StrictMode
+  → TemporaryBuildSettings.Restore   finally-block; active target restored in the Editor
+  → post-build validation            artifact, size, metadata matches request
+  → {artifact}.build.json / .release-manifest.json / .build-report.json
+```
+
+### Three versions, three meanings
+
+| Version | Source | Owner |
+|---|---|---|
+| Framework version | `GameFramework.Runtime.FrameworkVersion.Version` (`20.0.0`) | This framework. Also used by `Analytics.Diagnostics.FrameworkInfo`, which previously held a stale private copy. |
+| Application version | `PlayerSettings.bundleVersion`, a profile override, or `-version` | The game |
+| Platform build number | Android `versionCode`, iOS `CFBundleVersion` | The game's release process |
+
+The framework is not a UPM package, so there is no separate package version (and no package manifest
+to validate).
+
+### Build profiles
+
+A `FrameworkBuildProfile` asset (**Create → GameFramework → Build → Build Profile**) is one
+**target × environment** pair: `AndroidStaging`, `AndroidProduction`, `iOSProduction`, and so on. It
+holds only the values that genuinely vary per build:
+
+- the profile id
+- the `BuildTarget`
+- the `DeploymentEnvironment`
+- the development-build flag
+- scenes (empty = Build Settings)
+- whether a bootstrapper must be in the first scene
+- the version override
+- the build-number scheme
+- whether to persist version changes
+- an optional per-environment application id (e.g. `com.company.game.dev`)
+- the artifact slug
+- the output root
+- extra/forbidden defines
+- whether a clean Git tree is required
+- warnings-as-errors check ids
+- Android: AAB, require ARM64, and signing *variable names*
+- iOS: whether signing is handled externally
+
+Everything else stays in Player Settings, where it is validated but never rewritten.
+
+Generic samples live in `Samples/BuildProfiles/`: `AndroidDevelopment`, `AndroidStaging`,
+`AndroidProduction`, `iOSProduction`, and `Windows64Development`. They contain no real ids or
+credentials.
+
+### Environments
+
+`DeploymentEnvironment` has four values: `Unspecified`, `Development`, `Staging`, and `Production`. It
+extends Phase 19's `BuildEnvironment` rather than adding a second system. The pipeline passes exactly
+one `GAMEFRAMEWORK_ENV_*` define through `BuildPlayerOptions.extraScriptingDefines`. That define
+applies to that build only and is never written to Player Settings. At runtime it is read through
+`BuildEnvironment.Deployment`.
+
+The environment is separate from Unity's "Development Build" flag:
+
+- Staging may be either kind of build.
+- Production is never a development build; validation rejects it.
+
+Phase 17's `RemoteConfigEnvironment` stays authoritative for remote config. Build validation checks
+that the `RemoteConfigConfiguration` assigned in the build scenes matches the build's environment.
+
+### Versioning and build numbers
+
+`SemanticVersion` accepts `MAJOR[.MINOR[.PATCH]]` digits only. That is the one form iOS accepts
+for `CFBundleShortVersionString`, so a version never means different things per store. Pre-release
+suffixes are rejected.
+
+`BuildNumberScheme` controls where the build number comes from:
+
+- `FromPlayerSettings` (the default) uses the existing `versionCode`/`buildNumber`. The framework never
+  invents one.
+- `EncodedFromVersion` computes `major*10000 + minor*100 + patch`, so 1.4.0 becomes 10400. It requires
+  minor/patch < 100.
+- `-buildNumber` overrides either scheme.
+
+Build numbers must fall in 1..2,100,000,000. `VersionHistoryValidator` rejects (in Production) or warns
+about a build number lower than one already recorded in the same output folder.
+
+Version and build number are applied for the build and restored afterwards, unless the profile ticks
+`PersistVersionChanges`.
+
+### Validation
+
+Every check produces a `BuildValidationIssue` with a stable `CheckId`, a `Severity` (`Pass`/`Info`/
+`Warning`/`Error`), a message, and a suggested fix. Any Error stops the build. A profile's
+`WarningsAsErrors` promotes specific check ids. The text report prints one line per check with a
+`[PASS]`/`[INFO]`/`[WARN]`/`[FAIL]` prefix, so it is readable by a person and greppable in CI.
+Validators never throw for a failed check. A validator that does throw is converted into an Error,
+never skipped.
+
+| Validator | Checks |
+|---|---|
+| `ProfileValidator` | Id format; explicit environment; Production ≠ Development Build; platform module installed; define symbols valid; output not under `Assets/`; **an existing artifact at the same path is an Error unless `-overwrite`** |
+| `VersionHistoryValidator` | Build-number monotonicity against previous `*.build.json` in the output folder |
+| `SceneValidator` | Non-empty list, paths exist, no duplicates, text serialization, missing scripts, GameBootstrapper (or subclass, directly or via prefab) in the first scene |
+| `PlayerSettingsValidator` | Company/product name, application-id format and placeholders (`DefaultCompany`, `com.example`, …), default icon for release, Addressables presence |
+| `AndroidBuildValidator` | versionCode, min/target API sanity, IL2CPP + ARM64 (profile-controlled), App Bundle for Production, **release signing**, custom manifest permissions, Gradle templates, deep-link intent-filter, POST_NOTIFICATIONS |
+| `IosBuildValidator` | CFBundleVersion, deployment target, **signing boundary**, URL schemes for deep links, push-capability reminder |
+| `ReleaseSafetyValidator` | Hand-set `GAMEFRAMEWORK_ENV_*` defines, forbidden defines in Production (`DEBUG`, `DEVELOPMENT*`, `ENABLE_CHEATS`, `*CHEAT*`, `*MOCK*`, plus the profile's list), mock-provider toggles in build scenes/prefabs/prefab overrides, Phase 19 secret scan (release environments), Git clean state |
+| `FrameworkIntegrationValidator` | Remote-config environment matches; product catalog has store ids for the target and no Google static test SKUs in Production; analytics configuration assigned |
+
+Games add project rules by passing their own `IBuildValidator`s to
+`new FrameworkBuildPipeline(additionalValidators)`.
+
+The scene checks come from `SceneComponentScanner`, which reads build scenes and their prefab instances
+as **text YAML**, resolving each script GUID to its class so game subclasses are recognized. Scenes
+are never opened, so validation cannot dirty them. It is shallow by design: prefab-instance overrides
+are reported rather than merged, and binary-serialized scenes are reported as unscannable.
+
+### Signing boundary
+
+| In the repository | Outside the repository (CI secret store) |
+|---|---|
+| Environment-variable **names** on the profile (`GF_ANDROID_KEYSTORE_PATH`, `GF_ANDROID_KEYSTORE_PASSWORD`, `GF_ANDROID_KEY_ALIAS`, `GF_ANDROID_KEY_ALIAS_PASSWORD` by default) | The keystore file and the passwords |
+| iOS: "signing handled externally" (default) | Certificates, provisioning profiles, and Apple credentials, used by Xcode/CI |
+
+**Android.** For Staging/Production (and any non-development build), the signing variables are
+required. When they are set, `TemporaryBuildSettings` applies them to Player Settings for the build
+only and restores the previous values afterwards. If they are missing, validation fails for
+Production and warns for Staging, so the build never falls back silently to the debug key. Messages
+name missing *variables* only, never values. A keystore inside the project folder triggers a warning.
+The repository audit found no keystore files and empty keystore fields.
+
+**iOS.** With `IosSigningHandledExternally` (the default), Unity validates the project and CI/Xcode
+does the signing. Without it, Unity's Team ID plus automatic signing or a manual profile must be
+complete.
+
+### Command line (CI)
+
+```text
+Unity -batchmode -quit -nographics -projectPath <project> -logFile -
+      -buildTarget Android
+      -executeMethod GameFramework.Editor.Build.CommandLineBuild.Build
+      -profile AndroidProduction
+      [-environment Production] [-version 1.4.0] [-buildNumber 10400]
+      [-outputPath Builds] [-validateOnly] [-overwrite]
+```
+
+`-profile` is required. The other options work as follows:
+
+- `-environment` and `-buildTarget` are **assertions**: a value that does not match the profile is
+  rejected. `-buildTarget` accepts Unity's aliases (`Win64`, `OSXUniversal`, `Linux64`).
+- Options are case-insensitive.
+- A duplicate option, a missing value, or a non-integer build number is rejected.
+- Unity's own arguments are ignored.
+
+Pass Unity's `-buildTarget` so batch mode starts on the right platform; the pipeline never needs to
+switch targets there.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Success (or `-validateOnly` passed) |
+| 1 | Unexpected exception (logged in full) |
+| 2 | Invalid arguments / unknown profile / assertion mismatch |
+| 3 | Preflight validation failed |
+| 4 | Unity build failed |
+| 5 | Post-build validation failed |
+
+Signing secrets come from environment variables, never command-line arguments, and are never echoed.
+There is no CI-vendor-specific code; any system that can run Unity works.
+
+### Output layout and files
+
+```text
+Builds/                                    (git-ignored by the project's .gitignore)
+  Android/Production/
+    MyGame_Android_Production_1.4.0_10400.aab
+    MyGame_Android_Production_1.4.0_10400.build.json            full metadata
+    MyGame_Android_Production_1.4.0_10400.release-manifest.json release builds only
+    MyGame_Android_Production_1.4.0_10400.build-report.json     every run, including failures
+  Windows64/Development/
+    MyGame_Windows64_Development_1.2.3_7/MyGame_..._7.exe       standalone gets its own folder
+```
+
+Names are `{slug}_{Platform}_{Environment}_{Version}_{BuildNumber}`, sanitized to `[A-Za-z0-9._-]`,
+with no timestamps or random parts. The pipeline never deletes anything. All three JSON files are
+`JsonUtility`, carry a `SchemaVersion`, and use UTC ISO-8601 timestamps.
+
+| File | Contents | Never contains |
+|---|---|---|
+| `build.json` | version, build number, application id, target, environment, configuration, Git commit/branch/dirty, Unity and framework versions, host OS family, artifact name/size, defines, scenes | secrets, environment variables, user or machine names |
+| `release-manifest.json` | The stable subset of `build.json`. Written only for successful non-development Staging/Production builds. | — |
+| `build-report.json` | `Status`, duration, Unity result and warning/error counts, every validation and post-build issue (with a text `Level`), and the 10 largest packed assets from Unity's `BuildReport` | — |
+
+### Editor window
+
+**GameFramework → Build → Build Pipeline** is a UI Toolkit window (UXML/USS). It lets you:
+
+- pick a profile
+- override the version and build number
+- run Validate (no side effects) or Build
+- see the issue list, sorted by severity
+- open the output folder
+- see the last build's metadata
+
+Scenes, modules, and Player Settings stay in Unity's own windows.
+
+### Verified in this project
+
+- **Windows64 Development:** built for real, from the Phase 1 demo scenes. The artifact, metadata, and
+  report were written; post-build checks passed; Player Settings, defines, and the active target were
+  identical before and after.
+- **Android Development:** built for real. The result was a 42.1 MB APK (ARMv7/Mono, per this
+  repository's Player Settings), with versionCode/versionName applied for the build only. The Editor
+  switched to Android and back to Windows64 automatically, and Player Settings plus the App Bundle flag
+  were identical afterwards. The Burst `*_DoNotShip` debug folder Unity wrote beside it is now reported
+  by post-build validation as "archive for symbolication, never ship".
+- **Release profiles:** validating them against *this framework repository* correctly fails, because
+  the repository is not a game. It still has `DefaultCompany`, a placeholder application id, Mono/ARMv7,
+  and no keystore.
+- **Pre-existing defect found:** the first real standalone build exposed a framework bug.
+  `Feedback.MobileHapticProvider` called `Handheld.Vibrate` unguarded, so no non-mobile player could
+  compile. It is now `#if UNITY_ANDROID || UNITY_IOS`.
+
+### Debug symbols
+
+- Post-build validation reports every `*_DoNotShip` output Unity writes beside the artifact (Burst
+  debug information, IL2CPP backups) as something to archive, not ship.
+- For release environments, the Android validator reports the `symbols.zip` setting, so native crash
+  reports can be symbolicated in Play Console.
+- The pipeline never uploads symbols anywhere.
+
+### Known limitations
+
+- **No Addressables content build.** Addressables is not installed here. If it is installed later, the
+  pipeline only warns; run the content build before the player build.
+- **Store requirements that change yearly are reported, not enforced.** Google Play's target-API level
+  is shown as Info.
+- **iOS capabilities/entitlements are reminders only.** They live in the generated Xcode project and
+  are not observable from Unity.
+- **Custom-manifest detection is file-based.** It checks for `Assets/Plugins/Android/AndroidManifest.xml`.
+- **Scene scanning is text-level.** It does not merge prefab overrides and cannot scan binary scenes.
+- **Interactive builds switch targets twice.** An interactive build for a non-active target switches to
+  it and then back, which is two reimports. CI avoids this with `-buildTarget`.
+- **A killed Editor cannot restore settings.** If the Editor is killed mid-build, the `finally` restore
+  cannot run. The temporary changes are in-memory, unsaved Player Settings that Git would show.
+- **Debug folders can be shared between builds.** Unity names the Burst `*_DoNotShip` folder after the
+  product, not the artifact, so two builds in the same output folder share it.
+- **iOS was validated, not built.** No iOS build was run here, because it needs a Mac and Xcode for the
+  final stage.
+
 ## Roadmap
 
 Phase 3 deliberately did **not** include: Progression, Rewards, Currency, Inventory, Economy,
@@ -5291,3 +5553,10 @@ Explicitly out of scope (see that section's threat model and "Known limitations"
 custom cryptography, encrypted save data, a secure-storage implementation (no framework data needs
 one yet), a receipt-validation/authentication/any backend server, and a read-only mode for
 newer-version saves. The next planned phase is **Phase 20 — Build, Release & Store Pipeline**.
+
+Phase 20 — Build, Release & Store Pipeline. Done — see
+[Build, Release & Store Pipeline](#build-release--store-pipeline). Explicitly out of scope: store
+submission/upload (Play Console, App Store Connect, TestFlight), Fastlane or any CI-vendor
+integration, an Addressables content-build step, and symbol upload. The next planned phase is
+**Phase 21 — Framework Validation Game / Vertical Slice**: a small real game built on the framework,
+used as an integration and certification environment.

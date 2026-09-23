@@ -7,7 +7,7 @@ that most games need, without any game-specific content.
 
 ## Status
 
-**Phase 19 — Security, Data Integrity & Production Hardening**, on top of:
+**Phase 20 — Build, Release & Store Pipeline**, on top of:
 
 - **Phase 0** — core utilities (validation, extensions).
 - **Phase 1** — Bootstrap, Services, Logging, GameState, SceneManagement.
@@ -182,8 +182,27 @@ that most games need, without any game-specific content.
     duplicate ids, build profile).
 
   See `Framework.md`'s "Security, Data Integrity & Production Hardening" section for the threat model
-  and what client-side hardening cannot do. The next planned phase is **Phase 20 — Build, Release &
-  Store Pipeline**.
+  and what client-side hardening cannot do.
+- **Phase 20** — Editor-only build and release orchestration on Unity's own `BuildPipeline`
+  (`GameFramework.Editor.Build`):
+  - **Profiles:** `FrameworkBuildProfile` assets, one per target × environment. The environment is
+    `DeploymentEnvironment`, which extends Phase 19's `BuildEnvironment`. One `GAMEFRAMEWORK_ENV_*`
+    define is injected per build through `extraScriptingDefines`, never written to Player Settings.
+  - **Versioning:** a validated `MAJOR[.MINOR[.PATCH]]` application version, plus a configurable
+    platform build-number scheme.
+  - **Preflight validators:** project, scenes (read as text YAML), Player Settings, Android
+    (IL2CPP/ARM64, AAB, env-var-only release signing), iOS (external-signing boundary), release safety
+    (forbidden defines, mock providers, the Phase 19 secret scan, Git), and framework integration
+    (remote-config environment, store product ids).
+  - **Temporary settings:** applied and then restored in `finally`.
+  - **Output:** deterministic artifact names under a git-ignored `Builds/`, and post-build validation.
+  - **Files per build:** `build.json`, `release-manifest.json`, and `build-report.json`.
+  - **Entry points:** a provider-neutral CLI (`CommandLineBuild.Build`, exit codes 0–5) and a UI
+    Toolkit window.
+  - **Real builds:** Windows64 and Android development builds were built for real in this project. The
+    first standalone build exposed and fixed a pre-existing compile error in `MobileHapticProvider`.
+
+  The next planned phase is **Phase 21 — Framework Validation Game / Vertical Slice**.
 
 No player character, enemy AI, weapons, real ad network/store integration, a real analytics/crash
 SDK, remote config backend, a real notification SDK, or multiplayer exists yet, and no concrete
@@ -1033,6 +1052,15 @@ Complete API examples, edge cases, and design rationale for every system are doc
 
   The full suite after this phase, measured via the Unity Test Runner, was 1047 EditMode + 171
   PlayMode tests, all passing, with no regressions.
+- Phase 20: 118 new EditMode tests in `GameFramework.Editor.Tests` (`Preflight/Build/`):
+  - `VersioningAndNamingTests`: versions, build numbers, artifact names, and defines.
+  - `CommandLineTests`: parsing, assertions, Unity target aliases, and exit codes.
+  - `BuildValidationTests`: report promotion and text, resolution, each validator, the scanner, the
+    pipeline's validate-only behavior, and custom/throwing validators.
+  - `MetadataTests`: metadata, manifest, UTC, Git, signing-variable names, and debug outputs.
+
+  The measured full suite (1165 EditMode + 171 PlayMode) passes. Real Windows64 and Android
+  development builds were executed through the pipeline; iOS was validated only.
 
 ## Packages / Dependencies
 
@@ -1105,6 +1133,8 @@ Assets/GameFramework/
 │                         phase's infrastructure is fully exercised by its own test suite instead)
 │                         (Phase 19 adds Runtime/Security/ - redaction, build environment,
 │                         development-provider guard - and Editor/Security/ - Production Preflight)
+│                         (Phase 20 adds Editor/Build/ - build pipeline, validators, CLI, UI Toolkit
+│                         window - and Samples/BuildProfiles/ - generic sample profiles)
 ├── Tests/               Editor/ (EditMode) and Runtime/ (PlayMode) tests, mirroring Runtime/
 └── Documentation/       Framework.md — full authoritative reference
 ```
